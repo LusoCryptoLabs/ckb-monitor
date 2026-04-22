@@ -45,6 +45,44 @@ const csv = (name) => {
   return v ? v.split(",").map((s) => s.trim()).filter(Boolean) : [];
 };
 
+// ---------------- help ----------------
+if (flag("--help") || flag("-h")) {
+  console.log(`ckb-monitor  a live CKB on-chain monitor
+
+USAGE
+  node ckb-monitor.mjs [watch rules] [actions] [options]
+
+  With no watch rules it just streams pool/block/commit activity. Add a rule
+  to get ALERTs. A tx must satisfy ALL given rules; commas = OR within a rule.
+
+WATCH RULES
+  --address <ckb1.../ckt1...>[,...]   outputs paying to these address(es)
+  --min-ckb <N>                       total output capacity >= N CKB (whale watch)
+  --type <alias|0xhash>[,...]         dao, sudt, xudt, cota, unique, typeid, or a code hash
+  --type-args <0x...>[,...]           a specific token (xUDT/sUDT args = token id)
+  --lock-args <0x...>[,...]           outputs by raw lock args (alternative to --address)
+
+ACTIONS ON A MATCH
+  (always)                            print a highlighted ALERT line
+  --webhook <url>                     HTTP POST a JSON payload (Slack/Discord/backend)
+  --exec "<cmd>"                      run a shell command; env: CKB_TX_HASH, CKB_TX_TYPE,
+                                      CKB_TX_CKB, CKB_TX_EVENT, CKB_MATCHED, CKB_EXPLORER
+  --quiet                             only alerts + the periodic summary
+
+OPTIONS
+  --net testnet|mainnet               (or CKB_NET=...)            default mainnet
+  --ws <url>                          custom endpoint (or CKB_WS=...)
+  --summary-ms <ms>                   summary cadence (or SUMMARY_MS=...)  default 30000
+  -h, --help                          show this help
+
+EXAMPLES
+  node ckb-monitor.mjs --min-ckb 1000000
+  node ckb-monitor.mjs --address ckb1q... --webhook https://...
+  node ckb-monitor.mjs --type xudt --quiet
+  node ckb-monitor.mjs --net testnet --type-args 0x... --exec "notify-send 'CKB' \\"$CKB_TX_HASH\\""`);
+  process.exit(0);
+}
+
 // ---------------- endpoint ----------------
 const NET = (opt("--net") || process.env.CKB_NET || "mainnet").toLowerCase();
 const WS_URL =

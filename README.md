@@ -1,5 +1,7 @@
 # ckb-monitor
 
+[![ci](https://github.com/tecmeup123/ckb-monitor/actions/workflows/ci.yml/badge.svg)](https://github.com/tecmeup123/ckb-monitor/actions/workflows/ci.yml)
+
 A live CKB (Nervos) on-chain monitor in a single file. It subscribes to the public
 WebSocket (no node, no polling), classifies every transaction by type, tracks the
 pending to committed lifecycle, and the point of the tool, fires **actions** when a
@@ -13,7 +15,7 @@ Zero dependencies on Node 22+ (built-in `WebSocket`). On older Node: `npm i ws`.
 git clone <this-repo> ckb-monitor
 cd ckb-monitor
 # nothing to install on Node 22+
-node ckb-monitor.mjs --help-ish   # see the flags below
+node ckb-monitor.mjs --help   # see all flags
 ```
 
 Or run it directly:
@@ -72,6 +74,7 @@ within one rule.
 | `--net testnet` or `CKB_NET=testnet` | `mainnet` |
 | `--ws <url>` or `CKB_WS=<url>` | public endpoint for the chosen net |
 | `--summary-ms <ms>` | `30000` |
+| `-h`, `--help` | print usage and exit |
 
 ## Webhook payload
 
