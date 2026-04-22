@@ -20,6 +20,10 @@
 //   --exec "<cmd>"                run a shell command; env: CKB_TX_HASH, CKB_TX_TYPE, CKB_TX_CKB, CKB_TX_EVENT, CKB_MATCHED, CKB_EXPLORER
 //   --quiet                       show only alerts + the periodic summary (good for background monitoring)
 //
+// ── Live dashboard ──
+//   --serve [port]                browser dashboard (live table over SSE); default port 8080
+//   --port <n>                    dashboard port (alt to --serve <port>)
+//
 // ── Other ──
 //   --net testnet | CKB_NET=testnet      (default mainnet)
 //   --ws <url> | CKB_WS=<url>            custom endpoint
@@ -32,6 +36,7 @@
 //   node ckb-monitor.mjs --type-args 0x… --exec "notify-send 'CKB' \"$CKB_TX_HASH\""
 
 import { spawn } from "node:child_process";
+import http from "node:http";
 
 // ---------------- args ----------------
 const argv = process.argv.slice(2);
@@ -69,6 +74,10 @@ ACTIONS ON A MATCH
                                       CKB_TX_CKB, CKB_TX_EVENT, CKB_MATCHED, CKB_EXPLORER
   --quiet                             only alerts + the periodic summary
 
+DASHBOARD
+  --serve [port]                      live browser dashboard over SSE (default port 8080)
+  --port <n>                          dashboard port (alt to --serve <port>, or PORT env)
+
 OPTIONS
   --net testnet|mainnet               (or CKB_NET=...)            default mainnet
   --ws <url>                          custom endpoint (or CKB_WS=...)
@@ -79,6 +88,8 @@ EXAMPLES
   node ckb-monitor.mjs --min-ckb 1000000
   node ckb-monitor.mjs --address ckb1q... --webhook https://...
   node ckb-monitor.mjs --type xudt --quiet
+  node ckb-monitor.mjs --serve --net testnet            # open http://localhost:8080
+  node ckb-monitor.mjs --serve 9000 --min-ckb 1000000   # dashboard + whale alerts
   node ckb-monitor.mjs --net testnet --type-args 0x... --exec "notify-send 'CKB' \\"$CKB_TX_HASH\\""`);
   process.exit(0);
 }
@@ -215,6 +226,12 @@ const QUIET = flag("--quiet");
 const WEBHOOK = opt("--webhook");
 const EXEC = opt("--exec");
 
+// dashboard: --serve [port]  (or --port <n>, or PORT env)
+const SERVE = flag("--serve");
+const serveIdx = argv.indexOf("--serve");
+const inlinePort = serveIdx >= 0 && /^\d+$/.test(argv[serveIdx + 1] || "") ? argv[serveIdx + 1] : null;
+const PORT = Number(opt("--port") || inlinePort || process.env.PORT || 8080);
+
 // ---------------- helpers ----------------
 const fromHex = (h) => BigInt(h);
 const ts = () => new Date().toLocaleTimeString();
@@ -323,6 +340,11 @@ function alert(event, tx, cls, reasons, extra = "") {
   console.log(dim(`            ${payload.explorer}`));
   fireWebhook(payload);
   fireExec(payload);
+  pushEvent({
+    kind: "alert", t: Date.now(), event,
+    hash: tx.hash, type: cls.label, ckb: payload.capacityCKB,
+    matched: reasons, explorer: payload.explorer,
+  });
 }
 
 // ---------------- stats ----------------
@@ -335,6 +357,252 @@ function printSummary() {
   console.log(
     dim(`\u2500\u2500 ${ts()} \u00b7 ${blocksSeen} blocks \u00b7 ${txCommitted} committed \u00b7 alerts ${alerts} \u00b7 in-pool ${poolSeen.size} \u00b7 ${parts || "no activity yet"}`)
   );
+  pushEvent(statsPayload());
+}
+
+// ---------------- dashboard page (embedded, no framework) ----------------
+const DASHBOARD_HTML = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CKB monitor</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #0d1117; color: #c9d1d9;
+         font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  header { display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+           padding: 10px 16px; border-bottom: 1px solid #21262d; position: sticky; top: 0;
+           background: #0d1117; z-index: 2; }
+  h1 { font-size: 15px; margin: 0; font-weight: 700; letter-spacing: .3px; }
+  .pill { font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid #30363d; color: #8b949e; }
+  .pill.net { color: #58a6ff; border-color: #1f6feb; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; background: #f85149; }
+  .dot.live { background: #3fb950; box-shadow: 0 0 6px #3fb950; }
+  .stats { margin-left: auto; display: flex; gap: 16px; flex-wrap: wrap; }
+  .stat b { color: #e6edf3; font-weight: 700; } .stat span { color: #8b949e; }
+  #controls { display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+              padding: 8px 16px; border-bottom: 1px solid #21262d; color: #8b949e; }
+  #controls label { cursor: pointer; user-select: none; }
+  #controls input[type=checkbox] { vertical-align: -1px; }
+  button { background: #21262d; color: #c9d1d9; border: 1px solid #30363d; border-radius: 6px;
+           padding: 4px 10px; cursor: pointer; font: inherit; }
+  button:hover { border-color: #58a6ff; }
+  button.on { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+  #wrap { overflow: auto; height: calc(100vh - 96px); }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 4px 10px; white-space: nowrap; border-bottom: 1px solid #161b22; }
+  th { position: sticky; top: 0; background: #0d1117; color: #8b949e; font-weight: 600; z-index: 1; }
+  td.detail { white-space: normal; color: #8b949e; }
+  a { color: #58a6ff; text-decoration: none; } a:hover { text-decoration: underline; }
+  .badge { font-size: 11px; padding: 1px 7px; border-radius: 4px; font-weight: 700; }
+  .badge.pool   { background: #3a2f00; color: #e3b341; }
+  .badge.commit { background: #0f2e1a; color: #3fb950; }
+  .badge.block  { background: #0c2233; color: #58a6ff; }
+  .badge.alert  { background: #e3b341; color: #1a1500; }
+  tr.alert td { background: rgba(227,179,65,.08); }
+  tr.block td { background: rgba(88,166,255,.05); }
+  .t-token { color: #e3b341; } .t-nft { color: #56d4dd; } .t-dao { color: #d2a8ff; }
+  .t-transfer { color: #3fb950; } .t-dim { color: #8b949e; }
+  .hide-pool tr[data-k=pool], .hide-commit tr[data-k=commit],
+  .hide-block tr[data-k=block], .hide-alert tr[data-k=alert] { display: none; }
+  .muted { color: #6e7681; }
+</style>
+</head>
+<body>
+<header>
+  <span class="dot" id="dot"></span>
+  <h1>CKB monitor</h1>
+  <span class="pill net" id="net">…</span>
+  <span class="pill" id="conn">connecting…</span>
+  <div class="stats">
+    <span class="stat"><b id="s-blocks">0</b> <span>blocks</span></span>
+    <span class="stat"><b id="s-committed">0</b> <span>committed</span></span>
+    <span class="stat"><b id="s-alerts">0</b> <span>alerts</span></span>
+    <span class="stat"><b id="s-pool">0</b> <span>in-pool</span></span>
+  </div>
+</header>
+<section id="controls">
+  <span>show:</span>
+  <label><input type="checkbox" data-f="pool" checked> pool</label>
+  <label><input type="checkbox" data-f="commit" checked> commit</label>
+  <label><input type="checkbox" data-f="block" checked> block</label>
+  <label><input type="checkbox" data-f="alert" checked> alert</label>
+  <button id="pause">pause</button>
+  <button id="clear">clear</button>
+  <span class="muted" id="hint"></span>
+</section>
+<div id="wrap">
+  <table>
+    <thead><tr><th>time</th><th>event</th><th>type</th><th>hash</th><th>CKB</th><th>detail</th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+</div>
+<script>
+(function () {
+  var MAXROWS = 600;
+  var explorer = "", paused = false;
+  var rows = document.getElementById("rows");
+  var wrap = document.getElementById("wrap");
+  var dot = document.getElementById("dot"), conn = document.getElementById("conn");
+  function $(id) { return document.getElementById(id); }
+  function shorten(h) { return h.length > 20 ? h.slice(0, 10) + "\\u2026" + h.slice(-6) : h; }
+  function fmtTime(t) { try { return new Date(t).toLocaleTimeString(); } catch (e) { return ""; } }
+  function typeClass(t) {
+    if (!t) return "t-dim";
+    if (t.indexOf("token") >= 0) return "t-token";
+    if (t.indexOf("NFT") >= 0) return "t-nft";
+    if (t.indexOf("DAO") >= 0) return "t-dao";
+    if (t.indexOf("transfer") >= 0) return "t-transfer";
+    return "t-dim";
+  }
+  function cell(html, cls) { var td = document.createElement("td"); if (cls) td.className = cls; td.innerHTML = html; return td; }
+  function hashLink(h) {
+    if (!h) return "";
+    return '<a href="' + explorer + h + '" target="_blank" rel="noopener">' + shorten(h) + '</a>';
+  }
+  function addRow(o) {
+    if (paused) return;
+    var tr = document.createElement("tr");
+    tr.setAttribute("data-k", o.kind);
+    tr.className = o.kind;
+    var type = "", hash = "", ckb = "", detail = "", badge = o.kind;
+    if (o.kind === "block") {
+      type = '<span class="t-dim">block ' + o.number + "</span>";
+      hash = ""; ckb = ""; detail = o.txCount + " tx";
+    } else if (o.kind === "alert") {
+      badge = "alert " + (o.event || "");
+      type = '<span class="' + typeClass(o.type) + '">' + (o.type || "") + "</span>";
+      hash = hashLink(o.hash); ckb = o.ckb || "";
+      detail = (o.matched || []).join(", ");
+    } else if (o.kind === "pool") {
+      type = '<span class="' + typeClass(o.type) + '">' + (o.type || "") + "</span>";
+      hash = hashLink(o.hash); ckb = o.ckb || "";
+      detail = '<span class="muted">' + o.ins + " \\u2192 " + o.outs + "</span>";
+    } else if (o.kind === "commit") {
+      type = '<span class="' + typeClass(o.type) + '">' + (o.type || "") + "</span>";
+      hash = hashLink(o.hash); ckb = o.ckb || "";
+      var d = [];
+      if (o.latencyMs != null) d.push('<span class="muted">\\u23f1 ' + o.latencyMs + "ms in pool</span>");
+      if (o.matched) d.push('<span class="t-token">matched: ' + o.matched.join(", ") + "</span>");
+      detail = d.join(" \\u00b7 ");
+    } else { return; }
+    tr.appendChild(cell(fmtTime(o.t), "muted"));
+    tr.appendChild(cell('<span class="badge ' + o.kind + '">' + badge + "</span>"));
+    tr.appendChild(cell(type));
+    tr.appendChild(cell(hash));
+    tr.appendChild(cell(ckb));
+    tr.appendChild(cell(detail, "detail"));
+    rows.insertBefore(tr, rows.firstChild);
+    while (rows.childElementCount > MAXROWS) rows.removeChild(rows.lastChild);
+  }
+  function applyStats(o) {
+    $("s-blocks").textContent = o.blocks;
+    $("s-committed").textContent = o.committed;
+    $("s-alerts").textContent = o.alerts;
+    $("s-pool").textContent = o.inPool;
+  }
+  function applyMeta(o) {
+    explorer = o.explorer || "";
+    $("net").textContent = o.network;
+    document.title = "CKB monitor \\u00b7 " + o.network;
+    $("hint").textContent = o.hasRules ? ("watching: " + o.rules.join("  \\u00b7  ")) : "no rules set \\u2014 streaming all activity";
+  }
+  // filter checkboxes -> toggle a class on #wrap
+  var boxes = document.querySelectorAll("#controls input[data-f]");
+  for (var i = 0; i < boxes.length; i++) {
+    boxes[i].addEventListener("change", function (e) {
+      wrap.classList.toggle("hide-" + e.target.getAttribute("data-f"), !e.target.checked);
+    });
+  }
+  $("pause").addEventListener("click", function () {
+    paused = !paused;
+    this.classList.toggle("on", paused);
+    this.textContent = paused ? "resume" : "pause";
+  });
+  $("clear").addEventListener("click", function () { rows.innerHTML = ""; });
+
+  function connect() {
+    var es = new EventSource("/events");
+    es.onopen = function () { dot.classList.add("live"); conn.textContent = "live"; };
+    es.onerror = function () { dot.classList.remove("live"); conn.textContent = "reconnecting…"; };
+    es.onmessage = function (e) {
+      var o; try { o = JSON.parse(e.data); } catch (err) { return; }
+      if (o.kind === "stats") applyStats(o);
+      else if (o.kind === "meta") applyMeta(o);
+      else addRow(o);
+    };
+  }
+  connect();
+})();
+</script>
+</body>
+</html>`;
+
+// ---------------- live dashboard (SSE + embedded page) ----------------
+const sseClients = new Set();
+const recent = [];                       // ring buffer so a freshly opened tab sees recent activity
+const RECENT_MAX = 250;
+function pushEvent(obj) {
+  if (!SERVE) return;
+  recent.push(obj);
+  if (recent.length > RECENT_MAX) recent.shift();
+  const line = "data: " + JSON.stringify(obj) + "\n\n";
+  for (const res of sseClients) { try { res.write(line); } catch {} }
+}
+function metaPayload() {
+  const desc = [];
+  if (rules.minShannons !== null) desc.push("min " + ckb(rules.minShannons) + " CKB");
+  if (rules.types.length) desc.push("types [" + rules.types.map((h) => LABEL_OF[h] || short(h)).join(", ") + "]");
+  if (rules.typeArgs.length) desc.push("token-args [" + rules.typeArgs.map(short).join(", ") + "]");
+  if (rules.lockArgs.length) desc.push("lock-args [" + rules.lockArgs.map(short).join(", ") + "]");
+  if (rules.locks.length) desc.push("address(es) [" + rules.locks.length + "]");
+  return { kind: "meta", network: NET, ws: WS_URL, explorer: EXPLORER, hasRules: !!HAS_RULES, rules: desc };
+}
+function statsPayload() {
+  return {
+    kind: "stats",
+    blocks: blocksSeen,
+    committed: txCommitted,
+    alerts,
+    inPool: poolSeen.size,
+    counts: Object.fromEntries([...counts.entries()].sort((a, b) => b[1] - a[1])),
+  };
+}
+function startServer() {
+  const server = http.createServer((req, res) => {
+    const url = (req.url || "/").split("?")[0];
+    if (url === "/" || url === "/index.html") {
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.end(DASHBOARD_HTML);
+      return;
+    }
+    if (url === "/events") {
+      res.writeHead(200, {
+        "content-type": "text/event-stream",
+        "cache-control": "no-cache, no-transform",
+        connection: "keep-alive",
+        "x-accel-buffering": "no",
+      });
+      res.write("retry: 3000\n\n");
+      res.write("data: " + JSON.stringify(metaPayload()) + "\n\n");
+      for (const obj of recent) res.write("data: " + JSON.stringify(obj) + "\n\n");
+      res.write("data: " + JSON.stringify(statsPayload()) + "\n\n");
+      sseClients.add(res);
+      req.on("close", () => sseClients.delete(res));
+      return;
+    }
+    res.writeHead(404, { "content-type": "text/plain" });
+    res.end("not found");
+  });
+  server.on("error", (e) => {
+    if (e.code === "EADDRINUSE") console.error(red(`dashboard: port ${PORT} is in use \u2014 pass --port <n>`));
+    else console.error(red(`dashboard error: ${e.message}`));
+  });
+  server.listen(PORT, () => console.log(green(`dashboard \u2192 http://localhost:${PORT}`)));
+  // heartbeat so SSE connections survive idle proxies / sleeping tabs
+  setInterval(() => { for (const res of sseClients) { try { res.write(": ping\n\n"); } catch {} } }, 25000);
 }
 
 // ---------------- request/response over the socket ----------------
@@ -362,6 +630,11 @@ function handleNewTx(inner) {
       `${dim(ts())} ${yellow("\u27f3 pool  ")} ${cls.color(cls.label.padEnd(12))} ${short(tx.hash)} ${dim(`\u00b7 ${tx.inputs.length}\u2192${tx.outputs.length} \u00b7 ${ckb(capOf(tx))} CKB`)}`
     );
   }
+  pushEvent({
+    kind: "pool", t: Date.now(),
+    hash: tx.hash, type: cls.label, ckb: ckb(capOf(tx)),
+    ins: tx.inputs.length, outs: tx.outputs.length,
+  });
 }
 
 async function handleNewTip(inner) {
@@ -371,12 +644,13 @@ async function handleNewTip(inner) {
   if (!block) return;
   const txs = block.transactions || [];
   if (!QUIET) console.log(cyan(`${dim(ts())} \u25a3 block ${fromHex(inner.number).toString()} \u00b7 ${txs.length} tx`));
+  pushEvent({ kind: "block", t: Date.now(), number: Number(fromHex(inner.number)), txCount: txs.length });
   txs.forEach((tx, i) => {
     txCommitted++;
     const cls = classify(tx, i === 0);
     const seen = poolSeen.get(tx.hash);
-    let lat = "";
-    if (seen) { lat = dim(` \u00b7 \u23f1 ${Date.now() - seen}ms in pool`); poolSeen.delete(tx.hash); }
+    let lat = "", latencyMs = null;
+    if (seen) { latencyMs = Date.now() - seen; lat = dim(` \u00b7 \u23f1 ${latencyMs}ms in pool`); poolSeen.delete(tx.hash); }
     const reasons = matchRules(tx);
     if (reasons) { alerts++; alert("commit", tx, cls, reasons, lat); }
     if (!QUIET) {
@@ -384,7 +658,13 @@ async function handleNewTip(inner) {
         `${dim(ts())} ${green("\u2713 commit")} ${cls.color(cls.label.padEnd(12))} ${short(tx.hash)} ${dim(`\u00b7 ${ckb(capOf(tx))} CKB`)}${lat}`
       );
     }
+    pushEvent({
+      kind: "commit", t: Date.now(),
+      hash: tx.hash, type: cls.label, ckb: ckb(capOf(tx)),
+      latencyMs, matched: reasons || null,
+    });
   });
+  pushEvent(statsPayload());
   if (poolSeen.size > 5000) {
     const cutoff = Date.now() - 10 * 60 * 1000;
     for (const [h, t] of poolSeen) if (t < cutoff) poolSeen.delete(h);
@@ -432,11 +712,12 @@ if (HAS_RULES) {
   if (rules.lockArgs.length) desc.push(`lock-args [${rules.lockArgs.map(short).join(", ")}]`);
   if (rules.locks.length) desc.push(`address(es) [${rules.locks.length}]`);
   console.log(dim(`watching: ${desc.join("  \u00b7  ")}`));
-  console.log(dim(`actions: alert${WEBHOOK ? " + webhook" : ""}${EXEC ? " + exec" : ""}${QUIET ? "  (quiet)" : ""}\n`));
+  console.log(dim(`actions: alert${WEBHOOK ? " + webhook" : ""}${EXEC ? " + exec" : ""}${SERVE ? ` + dashboard:${PORT}` : ""}${QUIET ? "  (quiet)" : ""}\n`));
 } else {
   console.log(dim(`no --rules set, so just streaming. add e.g. --min-ckb 100000  or  --address ckb1…  to get alerts.`));
   console.log(dim(`${yellow("\u27f3")} pool   ${cyan("\u25a3")} block   ${green("\u2713")} committed (\u23f1 = time in pool)\n`));
 }
+if (SERVE) startServer();
 connect();
 setInterval(printSummary, SUMMARY_EVERY_MS);
 process.on("SIGINT", () => { console.log(); printSummary(); console.log(dim("stopped.")); process.exit(0); });

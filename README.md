@@ -65,6 +65,31 @@ within one rule.
   `CKB_TX_HASH`, `CKB_TX_TYPE`, `CKB_TX_CKB`, `CKB_TX_EVENT`, `CKB_MATCHED`, `CKB_EXPLORER`
 - `--quiet` show only alerts plus the periodic summary (good for background monitoring)
 
+## Live dashboard
+
+Add `--serve` to also run a tiny local web dashboard. It serves a single embedded
+page (no framework, no build) and pushes every pool/block/commit/alert event to the
+browser over Server-Sent Events. Works alongside all the watch rules and actions.
+
+```bash
+# stream testnet activity to a browser
+node ckb-monitor.mjs --serve --net testnet           # open http://localhost:8080
+
+# pick a port, and combine with rules
+node ckb-monitor.mjs --serve 9000 --min-ckb 1000000  # dashboard + whale alerts
+```
+
+The page shows a live-updating table (newest on top), per-type colors, a header with
+running counts (blocks / committed / alerts / in-pool), per-kind show/hide filters, and
+pause / clear controls. Matching transactions are highlighted as alert rows. Hashes link
+to the explorer. The connection auto-reconnects, and a freshly opened tab immediately
+sees the last ~250 events.
+
+| Flag | Default |
+| --- | --- |
+| `--serve [port]` | off; default port `8080` |
+| `--port <n>` or `PORT=<n>` | `8080` (alternative to `--serve <port>`) |
+
 ## Other flags
 
 | Flag | Default |
