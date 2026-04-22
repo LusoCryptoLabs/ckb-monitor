@@ -1,7 +1,5 @@
 # ckb-monitor
 
-[![ci](https://github.com/tecmeup123/ckb-monitor/actions/workflows/ci.yml/badge.svg)](https://github.com/tecmeup123/ckb-monitor/actions/workflows/ci.yml)
-
 A live CKB (Nervos) on-chain monitor in a single file. It subscribes to the public
 WebSocket (no node, no polling), classifies every transaction by type, tracks the
 pending to committed lifecycle, and the point of the tool, fires **actions** when a
@@ -101,6 +99,15 @@ On a match, the JSON posted to `--webhook` looks like:
   time each spent in the pool.
 - Addresses are decoded locally with a dependency-free bech32m implementation
   (full CKB2021 addresses only; use `--lock-args` for short/legacy forms).
+
+## Development
+
+No build step. Sanity-check the single file before committing:
+
+```bash
+npm run check   # node --check (syntax)
+npm test        # syntax check + --help smoke test
+```
 
 ## License
 

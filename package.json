@@ -10,7 +10,9 @@
   "scripts": {
     "start": "node ckb-monitor.mjs",
     "mainnet": "node ckb-monitor.mjs --net mainnet",
-    "testnet": "node ckb-monitor.mjs --net testnet"
+    "testnet": "node ckb-monitor.mjs --net testnet",
+    "check": "node --check ckb-monitor.mjs",
+    "test": "node --check ckb-monitor.mjs && node -e \"require('child_process').execFileSync(process.execPath,['ckb-monitor.mjs','--help'],{stdio:'ignore'})\""
   },
   "engines": {
     "node": ">=22"
