@@ -453,6 +453,19 @@ const DASHBOARD_HTML = `<!doctype html>
   .hide-block tr[data-k=block], .hide-alert tr[data-k=alert] { display: none; }
   #empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--muted); pointer-events: none; }
   .muted { color: var(--muted); }
+  .charts { display: flex; gap: 12px; padding: 4px 20px 2px; flex: none; flex-wrap: wrap; }
+  .panel { flex: 1; min-width: 210px; padding: 9px 13px 10px; border-radius: 12px; border: 1px solid var(--border);
+           background: linear-gradient(180deg, #0f1622, #0b1019); }
+  .ptitle { display: flex; justify-content: space-between; font-size: 10px; color: var(--muted);
+            text-transform: uppercase; letter-spacing: .7px; margin-bottom: 6px; }
+  .psub { color: var(--text); font-family: ui-monospace, monospace; text-transform: none; letter-spacing: 0; }
+  .panel canvas { width: 100%; height: 58px; display: block; }
+  #mix { display: flex; flex-direction: column; gap: 4px; min-height: 58px; justify-content: center; }
+  .mixrow { display: flex; align-items: center; gap: 8px; font-size: 11px; }
+  .mixlbl { width: 86px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mixbar { flex: 1; height: 7px; background: #0c121c; border-radius: 4px; overflow: hidden; }
+  .mixbar i { display: block; height: 100%; background: currentColor; opacity: .85; border-radius: 4px; }
+  .mixn { width: 32px; text-align: right; color: var(--muted); font-family: ui-monospace, monospace; }
 </style>
 </head>
 <body>
@@ -472,6 +485,20 @@ const DASHBOARD_HTML = `<!doctype html>
   <div class="card committed"><div class="num" id="s-committed">0</div><div class="lbl">committed</div></div>
   <div class="card alerts"><div class="num" id="s-alerts">0</div><div class="lbl">alerts</div></div>
   <div class="card pool"><div class="num" id="s-pool">0</div><div class="lbl">in pool</div></div>
+</div>
+<div class="charts">
+  <div class="panel">
+    <div class="ptitle"><span>throughput</span><span class="psub" id="tp-now">0/s</span></div>
+    <canvas id="c-tp"></canvas>
+  </div>
+  <div class="panel">
+    <div class="ptitle"><span>tx / block</span><span class="psub" id="bk-now"></span></div>
+    <canvas id="c-bk"></canvas>
+  </div>
+  <div class="panel">
+    <div class="ptitle"><span>type mix</span></div>
+    <div id="mix"></div>
+  </div>
 </div>
 <section id="controls">
   <div class="chips">
@@ -587,15 +614,85 @@ const DASHBOARD_HTML = `<!doctype html>
   });
   $("clear").addEventListener("click", function () { rows.innerHTML = ""; });
 
+  // ---- live charts (canvas, zero-dependency) ----
+  var tp = new Array(60).fill(0);   // events per second (ring; last slot = current second)
+  var blocks = [];                  // recent blocks: { n: txCount }
+  var typeCounts = {};
+  function track(o) {
+    tp[tp.length - 1]++;
+    if (o.kind === "block") { blocks.push({ n: o.txCount || 0 }); if (blocks.length > 48) blocks.shift(); drawBlocks(); }
+    if (o.kind === "pool" || o.kind === "commit" || o.kind === "alert") {
+      var t = o.type || "other"; typeCounts[t] = (typeCounts[t] || 0) + 1;
+    }
+  }
+  function ctxFor(cv, h) {
+    var dpr = window.devicePixelRatio || 1;
+    var w = cv.clientWidth || cv.parentNode.clientWidth || 200;
+    cv.width = Math.max(1, Math.floor(w * dpr)); cv.height = Math.floor(h * dpr);
+    var c = cv.getContext("2d"); c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return { c: c, w: w, h: h };
+  }
+  function drawTp() {
+    var cv = $("c-tp"); if (!cv) return; var g = ctxFor(cv, 58), c = g.c, w = g.w, h = g.h;
+    c.clearRect(0, 0, w, h);
+    var max = 1; for (var i = 0; i < tp.length; i++) if (tp[i] > max) max = tp[i];
+    var n = tp.length, step = w / (n - 1);
+    function y(v) { return h - (v / max) * (h - 6) - 2; }
+    c.beginPath(); c.moveTo(0, h);
+    for (var i = 0; i < n; i++) c.lineTo(i * step, y(tp[i]));
+    c.lineTo(w, h); c.closePath();
+    var grad = c.createLinearGradient(0, 0, 0, h);
+    grad.addColorStop(0, "rgba(47,230,197,.35)"); grad.addColorStop(1, "rgba(47,230,197,0)");
+    c.fillStyle = grad; c.fill();
+    c.beginPath();
+    for (var j = 0; j < n; j++) { var x = j * step, yy = y(tp[j]); if (j === 0) c.moveTo(x, yy); else c.lineTo(x, yy); }
+    c.strokeStyle = "#2fe6c5"; c.lineWidth = 1.5; c.stroke();
+  }
+  function drawBlocks() {
+    var cv = $("c-bk"); if (!cv) return; var g = ctxFor(cv, 58), c = g.c, w = g.w, h = g.h;
+    c.clearRect(0, 0, w, h);
+    if (!blocks.length) return;
+    var max = 1; for (var i = 0; i < blocks.length; i++) if (blocks[i].n > max) max = blocks[i].n;
+    var slots = Math.max(blocks.length, 24), step = w / slots, bw = Math.max(2, step - 2);
+    var off = blocks.length < slots ? (slots - blocks.length) : 0;
+    for (var k = 0; k < blocks.length; k++) {
+      var x = (k + off) * step, bh = (blocks[k].n / max) * (h - 4), yv = h - bh;
+      c.fillStyle = blocks[k].n >= max ? "#4aa3ff" : "rgba(74,163,255,.45)";
+      c.fillRect(x, yv, bw, Math.max(1, bh));
+    }
+    var bn = $("bk-now"); if (bn) bn.textContent = blocks[blocks.length - 1].n + " tx";
+  }
+  function drawMix() {
+    var el = $("mix"); if (!el) return;
+    var arr = []; for (var k in typeCounts) arr.push([k, typeCounts[k]]);
+    arr.sort(function (a, b) { return b[1] - a[1]; }); arr = arr.slice(0, 6);
+    var tot = 0; for (var i = 0; i < arr.length; i++) tot += arr[i][1];
+    var html = "";
+    for (var m = 0; m < arr.length; m++) {
+      var name = arr[m][0], cnt = arr[m][1], pct = tot ? Math.round(cnt / tot * 100) : 0, tc = typeClass(name);
+      html += '<div class="mixrow"><span class="mixlbl ' + tc + '">' + esc(name) + "</span>"
+            + '<span class="mixbar"><i class="' + tc + '" style="width:' + pct + '%"></i></span>'
+            + '<span class="mixn">' + cnt + "</span></div>";
+    }
+    el.innerHTML = html || '<div class="muted">no activity yet</div>';
+  }
+  setInterval(function () {
+    var nowsec = tp[tp.length - 1]; tp.push(0); tp.shift();
+    var lbl = $("tp-now"); if (lbl) lbl.textContent = nowsec + "/s";
+    drawTp(); drawMix();
+  }, 1000);
+  window.addEventListener("resize", function () { drawTp(); drawBlocks(); });
+  drawTp(); drawBlocks(); drawMix();
+
   function connect() {
     var es = new EventSource("/events");
     es.onopen = function () { dot.classList.add("live"); conn.textContent = "live"; };
     es.onerror = function () { dot.classList.remove("live"); conn.textContent = "reconnecting…"; };
     es.onmessage = function (e) {
       var o; try { o = JSON.parse(e.data); } catch (err) { return; }
-      if (o.kind === "stats") applyStats(o);
-      else if (o.kind === "meta") applyMeta(o);
-      else addRow(o);
+      if (o.kind === "stats") { applyStats(o); return; }
+      if (o.kind === "meta") { applyMeta(o); return; }
+      track(o); addRow(o);
     };
   }
   connect();
