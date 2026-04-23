@@ -94,16 +94,13 @@ EXAMPLES
   process.exit(0);
 }
 
-// ---------------- endpoint ----------------
-const NET = (opt("--net") || process.env.CKB_NET || "mainnet").toLowerCase();
-const WS_URL =
-  opt("--ws") ||
-  process.env.CKB_WS ||
-  (NET === "testnet" ? "wss://testnet.ckb.dev/ws" : "wss://mainnet.ckb.dev/ws");
+// ---------------- endpoint (NET is switchable at runtime via the dashboard) ----------------
+const wsForNet = (n) => (n === "testnet" ? "wss://testnet.ckb.dev/ws" : "wss://mainnet.ckb.dev/ws");
+const explorerForNet = (n) => (n === "testnet" ? "https://pudge.explorer.nervos.org/transaction/" : "https://explorer.nervos.org/transaction/");
+let NET = (opt("--net") || process.env.CKB_NET || "mainnet").toLowerCase();
+let WS_URL = opt("--ws") || process.env.CKB_WS || wsForNet(NET);
+let EXPLORER = explorerForNet(NET);
 const SUMMARY_EVERY_MS = Number(opt("--summary-ms") || process.env.SUMMARY_MS || 30000);
-const EXPLORER = NET === "testnet"
-  ? "https://pudge.explorer.nervos.org/transaction/"
-  : "https://explorer.nervos.org/transaction/";
 
 // ---------------- WebSocket impl ----------------
 let WSImpl = globalThis.WebSocket;
@@ -130,14 +127,21 @@ const TYPE_DEFS = {
     { alias: "dao", label: "Nervos DAO", hash: "0x82d76d1b75fe2fd9a27dfbaa65a039221a380d76c926f378d3f81cf3e7e13f2e" },
     { alias: "sudt", label: "sUDT token", hash: "0xc5e5dcf215925f7ef4dfaf5f4b4f105bc321c02776d6e7d52a1db3fcd9d011a4" },
     { alias: "xudt", label: "xUDT token", hash: "0x25c29dc317811a6f6f3985a7a9ebc4838bd388d19d0feeecf0bcd60f6c0975bb" },
+    { alias: "xudt", label: "xUDT token", hash: "0x50bd8d6680b8b9cf98b73f3c08faf8b2a21914311954118ad6609be6e78a1b95" },
     { alias: "cota", label: "CoTA NFT", hash: "0x89cd8003a0eaf8e65e0c31525b7d1d5c1becefd2ea75bb4cff87810ae37764d8" },
     { alias: "unique", label: "Unique cell", hash: "0x8e341bcfec6393dcd41e635733ff2dca00a6af546949f70c57a706c0f344df8b" },
     { alias: "typeid", label: "Type ID", hash: "0x00000000000000000000000000000000000000000000000000545950455f4944" },
   ],
 };
-const DEFS = TYPE_DEFS[NET] || TYPE_DEFS.mainnet;
-const LABEL_OF = Object.fromEntries(DEFS.map((d) => [d.hash, d.label]));
-const ALIAS_OF = Object.fromEntries(DEFS.map((d) => [d.alias, d.hash]));
+let DEFS, LABEL_OF, ALIAS_OF, TOKEN_HASHES;
+function rebuildDefs() {
+  DEFS = TYPE_DEFS[NET] || TYPE_DEFS.mainnet;
+  LABEL_OF = Object.fromEntries(DEFS.map((d) => [d.hash, d.label]));
+  ALIAS_OF = {};
+  for (const d of DEFS) (ALIAS_OF[d.alias] = ALIAS_OF[d.alias] || []).push(d.hash.toLowerCase());
+  TOKEN_HASHES = new Set([...(ALIAS_OF.sudt || []), ...(ALIAS_OF.xudt || [])]);
+}
+rebuildDefs();
 
 // ---------------- colors ----------------
 const useColor = !process.env.NO_COLOR && process.stdout.isTTY;
@@ -209,9 +213,11 @@ function ckbToShannons(s) {
   const frac = (f + "00000000").slice(0, 8);
   return BigInt(w || "0") * 100000000n + BigInt(frac || "0");
 }
+const rawTypeTokens = csv("--type");
+const resolveTypes = () => rawTypeTokens.flatMap((t) => (t.startsWith("0x") ? [t.toLowerCase()] : (ALIAS_OF[t.toLowerCase()] || [])));
 const rules = {
   minShannons: opt("--min-ckb") !== null ? ckbToShannons(opt("--min-ckb")) : null,
-  types: csv("--type").map((t) => (t.startsWith("0x") ? t.toLowerCase() : ALIAS_OF[t.toLowerCase()])).filter(Boolean),
+  types: resolveTypes(),
   typeArgs: csv("--type-args").map((s) => s.toLowerCase()),
   lockArgs: csv("--lock-args").map((s) => s.toLowerCase()),
   locks: csv("--address").map(decodeAddress),
@@ -254,6 +260,32 @@ function classify(tx, isCellbase) {
   }
   if (hashes.length) return { label: "typed cell", color: dim };
   return { label: "CKB transfer", color: green };
+}
+
+// little-endian u128 from a hex string (xUDT/sUDT amount lives in the first 16 bytes of cell data)
+function leU128(hex) {
+  if (!hex || hex.length < 4) return null;
+  const b = hex.slice(2);
+  let v = 0n;
+  for (let i = 0; i < 16 && i * 2 + 2 <= b.length; i++) v += BigInt(parseInt(b.slice(i * 2, i * 2 + 2), 16)) << BigInt(8 * i);
+  return v;
+}
+// first token output of a tx, with its decoded amount + token id (raw, no decimals applied)
+function tokenInfo(tx) {
+  const outs = tx.outputs || [], data = tx.outputs_data || [];
+  for (let i = 0; i < outs.length; i++) {
+    const o = outs[i];
+    if (o.type && TOKEN_HASHES.has(o.type.code_hash.toLowerCase())) {
+      const amt = leU128(data[i] || "0x");
+      return { amount: amt == null ? null : amt.toString(), id: (o.type.args || "").toLowerCase(), label: LABEL_OF[o.type.code_hash.toLowerCase()] || "token" };
+    }
+  }
+  return null;
+}
+// CKB epoch field packs number/index/length into one uint64
+function decodeEpoch(hex) {
+  const e = fromHex(hex);
+  return { number: Number(e & 0xffffffn), index: Number((e >> 24n) & 0xffffn), length: Number((e >> 40n) & 0xffffn) };
 }
 
 // returns matched-reason strings if the tx satisfies every given rule, else null
@@ -317,18 +349,24 @@ function fireExec(payload) {
       CKB_TX_EVENT: payload.event,
       CKB_MATCHED: payload.matched.join("; "),
       CKB_EXPLORER: payload.explorer,
+      CKB_TX_FEE: payload.feeCKB || "",
+      CKB_TOKEN: payload.token ? (payload.token.amount || "") : "",
     },
     stdio: "ignore",
   });
   child.on("error", (e) => console.error(red(`exec error: ${e.message}`)));
 }
-function alert(event, tx, cls, reasons, extra = "") {
+function alert(event, tx, cls, reasons, extra = "", info = {}) {
+  const feeCKB = info.fee != null ? ckb(info.fee) : null;
+  const token = info.token || tokenInfo(tx);
   const payload = {
     network: NET,
     event,
     txHash: tx.hash,
     type: cls.label,
     capacityCKB: ckb(capOf(tx)),
+    feeCKB,
+    token,
     matched: reasons,
     explorer: EXPLORER + tx.hash,
     time: new Date().toISOString(),
@@ -343,7 +381,7 @@ function alert(event, tx, cls, reasons, extra = "") {
   pushEvent({
     kind: "alert", t: Date.now(), event,
     hash: tx.hash, type: cls.label, ckb: payload.capacityCKB,
-    matched: reasons, explorer: payload.explorer,
+    fee: feeCKB, token, matched: reasons, explorer: payload.explorer,
   });
 }
 
@@ -351,7 +389,7 @@ function alert(event, tx, cls, reasons, extra = "") {
 const counts = new Map();
 const bump = (k) => counts.set(k, (counts.get(k) || 0) + 1);
 const poolSeen = new Map();
-let blocksSeen = 0, txCommitted = 0, alerts = 0;
+let blocksSeen = 0, txCommitted = 0, alerts = 0, lastTipTs = 0;
 function printSummary() {
   const parts = [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}:${v}`).join("  ");
   console.log(
@@ -424,7 +462,7 @@ const DASHBOARD_HTML = `<!doctype html>
              color: var(--muted); font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .7px;
              border-bottom: 1px solid var(--border); }
   tbody td { padding: 7px 13px; border-bottom: 1px solid #0f1622; white-space: nowrap; vertical-align: top; }
-  tbody tr { animation: rowin .25s ease; }
+  tbody tr.justin { animation: rowin .28s ease; }
   @keyframes rowin { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: none; } }
   tbody tr:hover td { background: rgba(255,255,255,.025); }
   td:first-child { border-left: 3px solid transparent; }
@@ -472,6 +510,21 @@ const DASHBOARD_HTML = `<!doctype html>
   #pulse { width: 100%; height: 100%; display: block; }
   .plabel { position: absolute; top: 8px; left: 12px; z-index: 1; font-size: 10px; letter-spacing: .7px;
             text-transform: uppercase; color: var(--muted); pointer-events: none; }
+  .netsw { display: flex; gap: 4px; }
+  .nbtn { font: inherit; font-size: 11px; cursor: pointer; color: var(--muted); background: #0c121c;
+          border: 1px solid var(--border); padding: 4px 11px; border-radius: 7px; }
+  .nbtn:hover { border-color: var(--teal); }
+  .nbtn.on { background: linear-gradient(135deg, var(--teal), var(--blue)); color: #04141a; font-weight: 700; border-color: transparent; }
+  #chainbar { display: flex; gap: 20px; align-items: center; flex-wrap: wrap; padding: 10px 20px 0; flex: none; font-size: 12px; color: var(--muted); }
+  .cstat b { color: var(--text); font-family: ui-monospace, monospace; }
+  .ebar { display: inline-block; width: 84px; height: 6px; background: #0c121c; border-radius: 4px; overflow: hidden; vertical-align: middle; }
+  .ebar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--teal), var(--blue)); transition: width .4s ease; }
+  .alertbanner { color: #ff7b72; font-weight: 700; }
+  #pager { display: flex; align-items: center; gap: 10px; padding: 10px 20px 14px; flex: none; font-size: 12px; color: var(--muted); }
+  #pager .btn[disabled] { opacity: .35; cursor: default; }
+  .pgl.on { background: var(--green); border-color: var(--green); color: #04140a; font-weight: 700; }
+  .pginfo b { color: var(--text); font-family: ui-monospace, monospace; }
+  #pg-size { font: inherit; font-size: 12px; background: #0c121c; color: var(--text); border: 1px solid var(--border); border-radius: 7px; padding: 4px 6px; }
 </style>
 </head>
 <body>
@@ -483,10 +536,21 @@ const DASHBOARD_HTML = `<!doctype html>
     <div class="sub mono" id="ws">…</div>
   </div>
   <span class="pill net" id="net">…</span>
+  <div class="netsw">
+    <button class="nbtn" data-net="testnet">testnet</button>
+    <button class="nbtn" data-net="mainnet">mainnet</button>
+  </div>
   <div class="spacer"></div>
   <div class="status"><span class="dot" id="dot"></span><span id="conn">connecting…</span></div>
 </header>
 <div id="pulsewrap"><span class="plabel">live network pulse</span><canvas id="pulse"></canvas></div>
+<div id="chainbar">
+  <span class="cstat">epoch <b id="ch-epoch">–</b> <span class="ebar"><i id="ch-ebar"></i></span> <span class="muted" id="ch-eidx"></span></span>
+  <span class="cstat">block <b id="ch-int">–</b></span>
+  <span class="cstat">mempool <b id="ch-pool">–</b></span>
+  <span class="cstat">fee <b id="ch-fee">–</b> <span class="muted">sh/kB</span></span>
+  <span class="cstat alertbanner" id="ch-alert" style="display:none"></span>
+</div>
 <div class="cards">
   <div class="card blocks"><div class="num" id="s-blocks">0</div><div class="lbl">blocks</div></div>
   <div class="card committed"><div class="num" id="s-committed">0</div><div class="lbl">committed</div></div>
@@ -525,10 +589,21 @@ const DASHBOARD_HTML = `<!doctype html>
     <tbody id="rows"></tbody>
   </table>
 </div>
+<div id="pager">
+  <button class="btn pgl" id="pg-live">● live</button>
+  <button class="btn" id="pg-newer">◂ newer</button>
+  <span class="pginfo"><b id="pg-info">0 / 1</b> <span class="muted" id="pg-count">0 rows</span></span>
+  <button class="btn" id="pg-older">older ▸</button>
+  <span class="muted">per page</span>
+  <select id="pg-size"><option>25</option><option selected>50</option><option>100</option><option>200</option></select>
+</div>
 <script>
 (function () {
-  var MAXROWS = 600;
-  var explorer = "", paused = false, started = false, prev = {};
+  var BUFMAX = 2000;
+  var buf = [];                 // newest-first event objects backing the paged table
+  var page = 0, pageSize = 50, pendingNew = 0, paused = false, prev = {};
+  var filters = { pool: true, commit: true, block: true, alert: true };
+  var explorer = "";
   var rows = document.getElementById("rows");
   var wrap = document.getElementById("wrap");
   var empty = document.getElementById("empty");
@@ -557,38 +632,65 @@ const DASHBOARD_HTML = `<!doctype html>
     return '<a href="' + explorer + esc(h) + '" target="_blank" rel="noopener" title="' + esc(h) + '">' + shorten(h) + "</a>";
   }
   function typeCell(o) { return '<span class="' + typeClass(o.type) + '">' + esc(o.type || "") + "</span>"; }
-  function addRow(o) {
-    if (paused) return;
-    if (!started) { started = true; if (empty) empty.style.display = "none"; }
-    var tr = document.createElement("tr");
-    tr.setAttribute("data-k", o.kind);
-    tr.className = o.kind;
-    var type = "", hash = "", ckb = "", detail = "", badge = o.kind;
+  function tokenName(t) { return (t.label || "token") + (t.id ? " " + t.id.slice(0, 8) : ""); }
+  function rowHtml(o) {
+    var badge = o.kind, type = "", hash = "", ckb = "", detail = "";
     if (o.kind === "block") {
       type = '<span class="t-dim">block ' + o.number + "</span>";
-      detail = '<span class="muted">' + o.txCount + " tx</span>";
-    } else if (o.kind === "alert") {
-      badge = "alert " + (o.event || "");
-      type = typeCell(o); hash = hashLink(o.hash); ckb = fmtCkb(o.ckb);
-      detail = '<span class="t-token">' + esc((o.matched || []).join(", ")) + "</span>";
-    } else if (o.kind === "pool") {
-      type = typeCell(o); hash = hashLink(o.hash); ckb = fmtCkb(o.ckb);
-      detail = '<span class="muted">' + o.ins + " \\u2192 " + o.outs + " cells</span>";
-    } else if (o.kind === "commit") {
+      var bp = ['<span class="muted">' + o.txCount + " tx</span>"];
+      if (o.intervalMs != null) bp.push('<span class="muted">+' + (o.intervalMs / 1000).toFixed(1) + "s</span>");
+      if (o.epoch) bp.push('<span class="muted">epoch ' + o.epoch.number + "</span>");
+      detail = bp.join(" \\u00b7 ");
+    } else {
+      if (o.kind === "alert") badge = "alert " + (o.event || "");
       type = typeCell(o); hash = hashLink(o.hash); ckb = fmtCkb(o.ckb);
       var d = [];
-      if (o.latencyMs != null) d.push('<span class="muted">\\u23f1 ' + o.latencyMs + "ms</span>");
-      if (o.matched) d.push('<span class="t-token">matched: ' + esc(o.matched.join(", ")) + "</span>");
+      if (o.token) d.push('<span class="t-token">\\u2b21 ' + (o.token.amount != null ? fmtCkb(o.token.amount) : "?") + " " + esc(tokenName(o.token)) + "</span>");
+      if (o.kind === "alert") d.push('<span class="t-token">' + esc((o.matched || []).join(", ")) + "</span>");
+      if (o.kind === "commit" && o.matched) d.push('<span class="t-token">matched: ' + esc(o.matched.join(", ")) + "</span>");
+      if (o.fee) d.push('<span class="muted">fee ' + o.fee + "</span>");
+      if (o.kind === "pool") d.push('<span class="muted">' + o.ins + " \\u2192 " + o.outs + " cells</span>");
+      if (o.kind === "commit" && o.latencyMs != null) d.push('<span class="muted">\\u23f1 ' + o.latencyMs + "ms</span>");
       detail = d.join(" \\u00b7 ");
-    } else { return; }
-    tr.appendChild(cell(fmtTime(o.t), "c-time"));
-    tr.appendChild(cell('<span class="badge ' + o.kind + '">' + badge + "</span>", "c-badge"));
-    tr.appendChild(cell(type, "c-type"));
-    tr.appendChild(cell(hash, "c-hash"));
-    tr.appendChild(cell(ckb, "c-ckb"));
-    tr.appendChild(cell(detail, "c-detail"));
-    rows.insertBefore(tr, rows.firstChild);
-    while (rows.childElementCount > MAXROWS) rows.removeChild(rows.lastChild);
+    }
+    return '<tr data-k="' + o.kind + '" class="' + o.kind + '">'
+      + '<td class="c-time">' + fmtTime(o.t) + "</td>"
+      + '<td class="c-badge"><span class="badge ' + o.kind + '">' + badge + "</span></td>"
+      + '<td class="c-type">' + type + "</td>"
+      + '<td class="c-hash">' + hash + "</td>"
+      + '<td class="c-ckb">' + ckb + "</td>"
+      + '<td class="c-detail">' + detail + "</td></tr>";
+  }
+  function visible() { var r = []; for (var i = 0; i < buf.length; i++) if (filters[buf[i].kind]) r.push(buf[i]); return r; }
+  function totalPages(n) { return Math.max(1, Math.ceil(n / pageSize)); }
+  function pagerCounts() {
+    var vis = visible(), tpg = totalPages(vis.length);
+    if (page >= tpg) page = tpg - 1; if (page < 0) page = 0;
+    $("pg-info").textContent = (vis.length ? (page + 1) : 0) + " / " + tpg;
+    $("pg-count").textContent = vis.length + " rows";
+    $("pg-newer").disabled = page <= 0;
+    $("pg-older").disabled = page >= tpg - 1;
+    var live = $("pg-live"); live.classList.toggle("on", page === 0);
+    live.textContent = page === 0 ? "\\u25cf live" : ("\\u2191 " + pendingNew + " new");
+    return vis;
+  }
+  function render() {
+    var vis = pagerCounts();
+    var slice = vis.slice(page * pageSize, page * pageSize + pageSize);
+    var html = ""; for (var i = 0; i < slice.length; i++) html += rowHtml(slice[i]);
+    rows.innerHTML = html;
+    empty.style.display = vis.length ? "none" : "";
+  }
+  function addEvent(o) {
+    if (paused) return;
+    buf.unshift(o); if (buf.length > BUFMAX) buf.pop();
+    if (page !== 0) { pendingNew++; pagerCounts(); return; }
+    if (!filters[o.kind]) { pagerCounts(); return; }
+    var tmp = document.createElement("tbody"); tmp.innerHTML = rowHtml(o);
+    var tr = tmp.firstChild; if (tr) { tr.className += " justin"; rows.insertBefore(tr, rows.firstChild); }
+    while (rows.childElementCount > pageSize) rows.removeChild(rows.lastChild);
+    empty.style.display = "none";
+    pagerCounts();
   }
   function setNum(id, val) {
     var el = $(id);
@@ -605,21 +707,55 @@ const DASHBOARD_HTML = `<!doctype html>
     $("ws").textContent = o.ws || "";
     document.title = "CKB monitor \\u00b7 " + o.network;
     $("hint").textContent = o.hasRules ? ("watching: " + o.rules.join("  \\u00b7  ")) : "no rules \\u2014 streaming all activity";
+    var nb = document.querySelectorAll(".nbtn");
+    for (var i = 0; i < nb.length; i++) nb[i].classList.toggle("on", nb[i].getAttribute("data-net") === o.network);
   }
+  function applyChain(o) {
+    if (o.pending != null) $("ch-pool").textContent = o.pending + "+" + o.proposed;
+    if (o.feeMedian != null) $("ch-fee").textContent = Math.round(o.feeMedian).toLocaleString();
+    var ab = $("ch-alert");
+    if (o.alerts && o.alerts.length) { ab.style.display = ""; ab.textContent = "\\u26a0 " + o.alerts.join(" \\u00b7 "); }
+    else { ab.style.display = "none"; ab.textContent = ""; }
+  }
+  function applyBlockMeta(o) {
+    if (o.epoch) {
+      $("ch-epoch").textContent = o.epoch.number;
+      var pct = o.epoch.length ? Math.round(o.epoch.index / o.epoch.length * 100) : 0;
+      $("ch-ebar").style.width = pct + "%";
+      $("ch-eidx").textContent = o.epoch.index + "/" + o.epoch.length;
+    }
+    if (o.intervalMs != null) $("ch-int").textContent = (o.intervalMs / 1000).toFixed(1) + "s";
+  }
+  function resetAll() {
+    buf = []; page = 0; pendingNew = 0;
+    tp = new Array(60).fill(0); blocks = []; typeCounts = {}; ripples = []; parts = [];
+    render(); drawTp(); drawBlocks(); drawMix();
+  }
+  // filter chips drive the buffer view
   var chips = document.querySelectorAll(".chip[data-f]");
-  for (var i = 0; i < chips.length; i++) {
-    chips[i].addEventListener("click", function () {
-      var k = this.getAttribute("data-f");
-      var off = this.classList.toggle("off");
-      wrap.classList.toggle("hide-" + k, off);
+  for (var ci = 0; ci < chips.length; ci++) {
+    chips[ci].addEventListener("click", function () {
+      filters[this.getAttribute("data-f")] = !this.classList.toggle("off");
+      page = 0; render();
     });
   }
+  // network switch buttons
+  var nbtns = document.querySelectorAll(".nbtn");
+  for (var ni = 0; ni < nbtns.length; ni++) {
+    nbtns[ni].addEventListener("click", function () {
+      fetch("/net?to=" + this.getAttribute("data-net")).catch(function () {});
+    });
+  }
+  // pager
+  $("pg-live").addEventListener("click", function () { page = 0; pendingNew = 0; render(); });
+  $("pg-newer").addEventListener("click", function () { if (page > 0) { page--; render(); } });
+  $("pg-older").addEventListener("click", function () { page++; render(); });
+  $("pg-size").addEventListener("change", function () { pageSize = parseInt(this.value, 10) || 50; page = 0; render(); });
   $("pause").addEventListener("click", function () {
-    paused = !paused;
-    this.classList.toggle("on", paused);
-    this.textContent = paused ? "resume" : "pause";
+    paused = !paused; this.classList.toggle("on", paused); this.textContent = paused ? "resume" : "pause";
   });
-  $("clear").addEventListener("click", function () { rows.innerHTML = ""; });
+  $("clear").addEventListener("click", function () { buf = []; page = 0; pendingNew = 0; render(); });
+  render();
 
   // ---- live charts (canvas, zero-dependency) ----
   var tp = new Array(60).fill(0);   // events per second (ring; last slot = current second)
@@ -757,7 +893,10 @@ const DASHBOARD_HTML = `<!doctype html>
       var o; try { o = JSON.parse(e.data); } catch (err) { return; }
       if (o.kind === "stats") { applyStats(o); return; }
       if (o.kind === "meta") { applyMeta(o); return; }
-      track(o); addRow(o);
+      if (o.kind === "chain") { applyChain(o); return; }
+      if (o.kind === "reset") { resetAll(); return; }
+      if (o.kind === "block") applyBlockMeta(o);
+      track(o); addEvent(o);
     };
   }
   connect();
@@ -819,6 +958,13 @@ function startServer() {
       req.on("close", () => sseClients.delete(res));
       return;
     }
+    if (url === "/net") {
+      const to = decodeURIComponent(((req.url.split("to=")[1] || "").split("&")[0]) || "");
+      const ok = switchNet(to);
+      res.writeHead(ok ? 200 : 400, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok, net: NET }));
+      return;
+    }
     res.writeHead(404, { "content-type": "text/plain" });
     res.end("not found");
   });
@@ -832,7 +978,7 @@ function startServer() {
 }
 
 // ---------------- request/response over the socket ----------------
-let ws, reqId = 1000;
+let ws, reqId = 1000, switching = false;
 const pending = new Map();
 function call(method, params) {
   return new Promise((resolve, reject) => {
@@ -847,10 +993,18 @@ function handleNewTx(inner) {
   const tx = inner.transaction;
   if (!tx) return;
   const cls = classify(tx, false);
-  poolSeen.set(tx.hash, Date.now());
+  // the mempool entry carries fee/cycles/size for free; stash them for the commit row
+  const meta = {
+    t: Date.now(),
+    fee: inner.fee != null ? fromHex(inner.fee) : null,
+    cycles: inner.cycles != null ? Number(fromHex(inner.cycles)) : null,
+    size: inner.size != null ? Number(fromHex(inner.size)) : null,
+  };
+  poolSeen.set(tx.hash, meta);
   bump(cls.label);
+  const tok = tokenInfo(tx);
   const reasons = matchRules(tx);
-  if (reasons) { alerts++; alert("pool", tx, cls, reasons); }
+  if (reasons) { alerts++; alert("pool", tx, cls, reasons, "", { fee: meta.fee, token: tok }); }
   if (!QUIET) {
     console.log(
       `${dim(ts())} ${yellow("\u27f3 pool  ")} ${cls.color(cls.label.padEnd(12))} ${short(tx.hash)} ${dim(`\u00b7 ${tx.inputs.length}\u2192${tx.outputs.length} \u00b7 ${ckb(capOf(tx))} CKB`)}`
@@ -860,6 +1014,7 @@ function handleNewTx(inner) {
     kind: "pool", t: Date.now(),
     hash: tx.hash, type: cls.label, ckb: ckb(capOf(tx)),
     ins: tx.inputs.length, outs: tx.outputs.length,
+    fee: meta.fee != null ? ckb(meta.fee) : null, cycles: meta.cycles, token: tok,
   });
 }
 
@@ -870,15 +1025,20 @@ async function handleNewTip(inner) {
   if (!block) return;
   const txs = block.transactions || [];
   if (!QUIET) console.log(cyan(`${dim(ts())} \u25a3 block ${fromHex(inner.number).toString()} \u00b7 ${txs.length} tx`));
-  pushEvent({ kind: "block", t: Date.now(), number: Number(fromHex(inner.number)), txCount: txs.length });
+  const tipTs = inner.timestamp ? Number(fromHex(inner.timestamp)) : Date.now();
+  const intervalMs = lastTipTs ? tipTs - lastTipTs : null;
+  lastTipTs = tipTs;
+  const epoch = inner.epoch ? decodeEpoch(inner.epoch) : null;
+  pushEvent({ kind: "block", t: Date.now(), number: Number(fromHex(inner.number)), txCount: txs.length, ts: tipTs, intervalMs, epoch });
   txs.forEach((tx, i) => {
     txCommitted++;
     const cls = classify(tx, i === 0);
     const seen = poolSeen.get(tx.hash);
-    let lat = "", latencyMs = null;
-    if (seen) { latencyMs = Date.now() - seen; lat = dim(` \u00b7 \u23f1 ${latencyMs}ms in pool`); poolSeen.delete(tx.hash); }
+    let lat = "", latencyMs = null, fee = seen ? seen.fee : null;
+    if (seen) { latencyMs = Date.now() - seen.t; lat = dim(` \u00b7 \u23f1 ${latencyMs}ms in pool`); poolSeen.delete(tx.hash); }
+    const tok = tokenInfo(tx);
     const reasons = matchRules(tx);
-    if (reasons) { alerts++; alert("commit", tx, cls, reasons, lat); }
+    if (reasons) { alerts++; alert("commit", tx, cls, reasons, lat, { fee, token: tok }); }
     if (!QUIET) {
       console.log(
         `${dim(ts())} ${green("\u2713 commit")} ${cls.color(cls.label.padEnd(12))} ${short(tx.hash)} ${dim(`\u00b7 ${ckb(capOf(tx))} CKB`)}${lat}`
@@ -887,13 +1047,13 @@ async function handleNewTip(inner) {
     pushEvent({
       kind: "commit", t: Date.now(),
       hash: tx.hash, type: cls.label, ckb: ckb(capOf(tx)),
-      latencyMs, matched: reasons || null,
+      latencyMs, fee: fee != null ? ckb(fee) : null, token: tok, matched: reasons || null,
     });
   });
   pushEvent(statsPayload());
   if (poolSeen.size > 5000) {
     const cutoff = Date.now() - 10 * 60 * 1000;
-    for (const [h, t] of poolSeen) if (t < cutoff) poolSeen.delete(h);
+    for (const [h, m] of poolSeen) if (m.t < cutoff) poolSeen.delete(h);
   }
 }
 
@@ -922,10 +1082,52 @@ function connect() {
     }
   });
   ws.addEventListener("close", () => {
+    if (switching) { switching = false; connect(); return; }
     console.log(red("disconnected \u2014 reconnecting in 3s"));
     setTimeout(connect, 3000);
   });
   ws.addEventListener("error", () => {});
+}
+
+// switch the upstream network at runtime (driven by the dashboard /net endpoint)
+function switchNet(to) {
+  to = to === "mainnet" ? "mainnet" : to === "testnet" ? "testnet" : null;
+  if (!to || to === NET) return false;
+  NET = to;
+  WS_URL = wsForNet(NET);
+  EXPLORER = explorerForNet(NET);
+  rebuildDefs();
+  rules.types = resolveTypes();
+  counts.clear(); poolSeen.clear();
+  blocksSeen = 0; txCommitted = 0; alerts = 0; lastTipTs = 0;
+  recent.length = 0;
+  console.log(green(`switching network \u2192 ${NET}`));
+  pushEvent({ kind: "reset", network: NET });
+  pushEvent(metaPayload());
+  pushEvent(statsPayload());
+  switching = true;
+  try { ws && ws.close(); } catch {}
+  return true;
+}
+
+// poll chain-wide stats (mempool depth, fee market, network alerts) for the dashboard
+async function pollChain() {
+  if (!SERVE || !ws || ws.readyState !== 1) return;
+  try {
+    const [info, pool, fee] = await Promise.all([
+      call("get_blockchain_info", []).catch(() => null),
+      call("tx_pool_info", []).catch(() => null),
+      call("get_fee_rate_statistics", []).catch(() => null),
+    ]);
+    pushEvent({
+      kind: "chain",
+      alerts: info && info.alerts ? info.alerts.map((a) => a.message || String(a)) : [],
+      pending: pool ? Number(fromHex(pool.pending)) : null,
+      proposed: pool ? Number(fromHex(pool.proposed)) : null,
+      minFee: pool ? Number(fromHex(pool.min_fee_rate)) : null,
+      feeMedian: fee && fee.median ? Number(fromHex(fee.median)) : null,
+    });
+  } catch {}
 }
 
 // ---------------- go ----------------
@@ -943,7 +1145,7 @@ if (HAS_RULES) {
   console.log(dim(`no --rules set, so just streaming. add e.g. --min-ckb 100000  or  --address ckb1…  to get alerts.`));
   console.log(dim(`${yellow("\u27f3")} pool   ${cyan("\u25a3")} block   ${green("\u2713")} committed (\u23f1 = time in pool)\n`));
 }
-if (SERVE) startServer();
+if (SERVE) { startServer(); setInterval(pollChain, 8000); }
 connect();
 setInterval(printSummary, SUMMARY_EVERY_MS);
 process.on("SIGINT", () => { console.log(); printSummary(); console.log(dim("stopped.")); process.exit(0); });
