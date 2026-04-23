@@ -367,88 +367,148 @@ const DASHBOARD_HTML = `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CKB monitor</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%230a0e14'/><path d='M16 4l10 12-10 12L6 16z' fill='%232fe6c5'/></svg>">
 <style>
-  :root { color-scheme: dark; }
+  :root {
+    --bg:#0a0e14; --border:#1b2433; --text:#d8e0ea; --muted:#6b7785;
+    --teal:#2fe6c5; --green:#3fd07f; --amber:#f5b342; --blue:#4aa3ff; --purple:#c08bff; --nft:#45d6e0;
+    color-scheme: dark;
+  }
   * { box-sizing: border-box; }
-  body { margin: 0; background: #0d1117; color: #c9d1d9;
-         font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-  header { display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
-           padding: 10px 16px; border-bottom: 1px solid #21262d; position: sticky; top: 0;
-           background: #0d1117; z-index: 2; }
-  h1 { font-size: 15px; margin: 0; font-weight: 700; letter-spacing: .3px; }
-  .pill { font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid #30363d; color: #8b949e; }
-  .pill.net { color: #58a6ff; border-color: #1f6feb; }
-  .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; background: #f85149; }
-  .dot.live { background: #3fb950; box-shadow: 0 0 6px #3fb950; }
-  .stats { margin-left: auto; display: flex; gap: 16px; flex-wrap: wrap; }
-  .stat b { color: #e6edf3; font-weight: 700; } .stat span { color: #8b949e; }
-  #controls { display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
-              padding: 8px 16px; border-bottom: 1px solid #21262d; color: #8b949e; }
-  #controls label { cursor: pointer; user-select: none; }
-  #controls input[type=checkbox] { vertical-align: -1px; }
-  button { background: #21262d; color: #c9d1d9; border: 1px solid #30363d; border-radius: 6px;
-           padding: 4px 10px; cursor: pointer; font: inherit; }
-  button:hover { border-color: #58a6ff; }
-  button.on { background: #1f6feb; border-color: #1f6feb; color: #fff; }
-  #wrap { overflow: auto; height: calc(100vh - 96px); }
-  table { width: 100%; border-collapse: collapse; }
-  th, td { text-align: left; padding: 4px 10px; white-space: nowrap; border-bottom: 1px solid #161b22; }
-  th { position: sticky; top: 0; background: #0d1117; color: #8b949e; font-weight: 600; z-index: 1; }
-  td.detail { white-space: normal; color: #8b949e; }
-  a { color: #58a6ff; text-decoration: none; } a:hover { text-decoration: underline; }
-  .badge { font-size: 11px; padding: 1px 7px; border-radius: 4px; font-weight: 700; }
-  .badge.pool   { background: #3a2f00; color: #e3b341; }
-  .badge.commit { background: #0f2e1a; color: #3fb950; }
-  .badge.block  { background: #0c2233; color: #58a6ff; }
-  .badge.alert  { background: #e3b341; color: #1a1500; }
-  tr.alert td { background: rgba(227,179,65,.08); }
-  tr.block td { background: rgba(88,166,255,.05); }
-  .t-token { color: #e3b341; } .t-nft { color: #56d4dd; } .t-dao { color: #d2a8ff; }
-  .t-transfer { color: #3fb950; } .t-dim { color: #8b949e; }
+  html, body { height: 100%; }
+  body { margin: 0; color: var(--text); display: flex; flex-direction: column; overflow: hidden;
+         background: radial-gradient(1100px 520px at 82% -12%, rgba(47,230,197,.10), transparent 60%), var(--bg);
+         font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .accentbar { height: 3px; flex: none; background: linear-gradient(90deg, var(--teal), var(--blue), var(--purple)); }
+  header { display: flex; align-items: center; gap: 13px; padding: 14px 20px; flex: none;
+           border-bottom: 1px solid var(--border); background: linear-gradient(180deg, #0e1420, #0a0e14); }
+  .logo { width: 28px; height: 28px; border-radius: 8px; font-size: 15px; color: #04141a; font-weight: 800;
+          display: flex; align-items: center; justify-content: center;
+          background: linear-gradient(135deg, var(--teal), var(--blue)); box-shadow: 0 0 18px rgba(47,230,197,.35); }
+  .brand h1 { font-size: 15px; margin: 0; font-weight: 700; letter-spacing: .2px; }
+  .brand .sub { font-size: 11px; color: var(--muted); }
+  .spacer { margin-left: auto; }
+  .pill { font-size: 11px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); }
+  .pill.net { color: var(--teal); border-color: #1c4a44; background: #0c1a18; text-transform: uppercase; letter-spacing: .6px; font-weight: 600; }
+  .status { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted);
+            padding: 5px 12px; border: 1px solid var(--border); border-radius: 999px; background: #0c121c; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #f85149; }
+  .dot.live { background: var(--green); animation: pulse 1.8s infinite; }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(63,208,127,.5); } 70% { box-shadow: 0 0 0 7px rgba(63,208,127,0); } 100% { box-shadow: 0 0 0 0 rgba(63,208,127,0); } }
+  .cards { display: flex; gap: 12px; padding: 14px 20px 6px; flex: none; flex-wrap: wrap; }
+  .card { flex: 1; min-width: 120px; padding: 12px 15px; border-radius: 12px; border: 1px solid var(--border);
+          background: linear-gradient(180deg, #0f1622, #0b1019); }
+  .card .num { font-size: 26px; font-weight: 800; line-height: 1; letter-spacing: -.5px; font-family: ui-monospace, monospace; }
+  .card .lbl { font-size: 10px; color: var(--muted); margin-top: 7px; text-transform: uppercase; letter-spacing: .7px; }
+  .card.blocks .num { color: var(--blue); } .card.committed .num { color: var(--green); }
+  .card.alerts .num { color: var(--amber); } .card.pool .num { color: var(--teal); }
+  .num.bump { animation: bump .6s ease; }
+  @keyframes bump { 0% { transform: scale(1.18); filter: brightness(1.6); } 100% { transform: scale(1); } }
+  #controls { display: flex; align-items: center; gap: 9px; padding: 10px 20px 12px; flex: none; flex-wrap: wrap; }
+  .chips { display: flex; gap: 7px; }
+  .chip { font: inherit; font-size: 12px; cursor: pointer; color: var(--text); background: #0c121c;
+          border: 1px solid var(--border); padding: 5px 12px; border-radius: 999px; display: flex; align-items: center; gap: 7px; }
+  .chip::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .chip.pool::before { background: var(--amber); } .chip.commit::before { background: var(--green); }
+  .chip.block::before { background: var(--blue); } .chip.alert::before { background: var(--amber); }
+  .chip.off { opacity: .35; }
+  .btn { font: inherit; font-size: 12px; cursor: pointer; color: var(--text); background: #0c121c;
+         border: 1px solid var(--border); padding: 5px 13px; border-radius: 8px; }
+  .btn:hover { border-color: var(--teal); }
+  .btn.on { background: var(--amber); border-color: var(--amber); color: #1a1200; font-weight: 700; }
+  .hint { font-size: 11px; color: var(--muted); margin-left: auto; }
+  #wrap { flex: 1; overflow: auto; margin: 0 14px 14px; border: 1px solid var(--border); border-radius: 12px; background: #0b1018; position: relative; }
+  table { width: 100%; border-collapse: separate; border-spacing: 0; }
+  thead th { position: sticky; top: 0; z-index: 1; text-align: left; padding: 9px 13px; background: #0c1320;
+             color: var(--muted); font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .7px;
+             border-bottom: 1px solid var(--border); }
+  tbody td { padding: 7px 13px; border-bottom: 1px solid #0f1622; white-space: nowrap; vertical-align: top; }
+  tbody tr { animation: rowin .25s ease; }
+  @keyframes rowin { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: none; } }
+  tbody tr:hover td { background: rgba(255,255,255,.025); }
+  td:first-child { border-left: 3px solid transparent; }
+  td.c-time { color: var(--muted); font-family: ui-monospace, monospace; font-size: 12px; }
+  .c-ckb { text-align: right; }
+  td.c-ckb { font-family: ui-monospace, monospace; color: #aeb9c6; }
+  td.c-hash { font-family: ui-monospace, monospace; }
+  td.c-detail { white-space: normal; color: var(--muted); max-width: 440px; }
+  tr.commit td:first-child { border-left-color: rgba(63,208,127,.5); }
+  tr.pool   td:first-child { border-left-color: rgba(245,179,66,.4); }
+  tr.block  td:first-child { border-left-color: rgba(74,163,255,.6); }
+  tr.alert  td:first-child { border-left-color: var(--amber); }
+  tr.block td { background: rgba(74,163,255,.05); color: var(--blue); }
+  tr.alert td { background: rgba(245,179,66,.09); }
+  tr.alert { animation: rowin .25s ease, apulse 1.5s ease-in-out 2; }
+  @keyframes apulse { 0%,100% { filter: none; } 50% { filter: brightness(1.18); } }
+  a { color: var(--blue); text-decoration: none; } a:hover { color: var(--teal); text-decoration: underline; }
+  .badge { font-size: 10px; padding: 2px 8px; border-radius: 5px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; }
+  .badge.pool   { background: #2a2200; color: var(--amber); }
+  .badge.commit { background: #0c2317; color: var(--green); }
+  .badge.block  { background: #0a1c2e; color: var(--blue); }
+  .badge.alert  { background: var(--amber); color: #1a1200; }
+  .t-token { color: var(--amber); } .t-nft { color: var(--nft); } .t-dao { color: var(--purple); }
+  .t-transfer { color: var(--green); } .t-dim { color: var(--muted); }
   .hide-pool tr[data-k=pool], .hide-commit tr[data-k=commit],
   .hide-block tr[data-k=block], .hide-alert tr[data-k=alert] { display: none; }
-  .muted { color: #6e7681; }
+  #empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--muted); pointer-events: none; }
+  .muted { color: var(--muted); }
 </style>
 </head>
 <body>
+<div class="accentbar"></div>
 <header>
-  <span class="dot" id="dot"></span>
-  <h1>CKB monitor</h1>
-  <span class="pill net" id="net">…</span>
-  <span class="pill" id="conn">connecting…</span>
-  <div class="stats">
-    <span class="stat"><b id="s-blocks">0</b> <span>blocks</span></span>
-    <span class="stat"><b id="s-committed">0</b> <span>committed</span></span>
-    <span class="stat"><b id="s-alerts">0</b> <span>alerts</span></span>
-    <span class="stat"><b id="s-pool">0</b> <span>in-pool</span></span>
+  <div class="logo">◈</div>
+  <div class="brand">
+    <h1>CKB monitor</h1>
+    <div class="sub mono" id="ws">…</div>
   </div>
+  <span class="pill net" id="net">…</span>
+  <div class="spacer"></div>
+  <div class="status"><span class="dot" id="dot"></span><span id="conn">connecting…</span></div>
 </header>
+<div class="cards">
+  <div class="card blocks"><div class="num" id="s-blocks">0</div><div class="lbl">blocks</div></div>
+  <div class="card committed"><div class="num" id="s-committed">0</div><div class="lbl">committed</div></div>
+  <div class="card alerts"><div class="num" id="s-alerts">0</div><div class="lbl">alerts</div></div>
+  <div class="card pool"><div class="num" id="s-pool">0</div><div class="lbl">in pool</div></div>
+</div>
 <section id="controls">
-  <span>show:</span>
-  <label><input type="checkbox" data-f="pool" checked> pool</label>
-  <label><input type="checkbox" data-f="commit" checked> commit</label>
-  <label><input type="checkbox" data-f="block" checked> block</label>
-  <label><input type="checkbox" data-f="alert" checked> alert</label>
-  <button id="pause">pause</button>
-  <button id="clear">clear</button>
-  <span class="muted" id="hint"></span>
+  <div class="chips">
+    <button class="chip pool" data-f="pool">pool</button>
+    <button class="chip commit" data-f="commit">commit</button>
+    <button class="chip block" data-f="block">block</button>
+    <button class="chip alert" data-f="alert">alert</button>
+  </div>
+  <button class="btn" id="pause">pause</button>
+  <button class="btn" id="clear">clear</button>
+  <span class="hint" id="hint"></span>
 </section>
 <div id="wrap">
+  <div id="empty">waiting for activity…</div>
   <table>
-    <thead><tr><th>time</th><th>event</th><th>type</th><th>hash</th><th>CKB</th><th>detail</th></tr></thead>
+    <thead><tr><th>time</th><th>event</th><th>type</th><th>hash</th><th class="c-ckb">CKB</th><th>detail</th></tr></thead>
     <tbody id="rows"></tbody>
   </table>
 </div>
 <script>
 (function () {
   var MAXROWS = 600;
-  var explorer = "", paused = false;
+  var explorer = "", paused = false, started = false, prev = {};
   var rows = document.getElementById("rows");
   var wrap = document.getElementById("wrap");
+  var empty = document.getElementById("empty");
   var dot = document.getElementById("dot"), conn = document.getElementById("conn");
   function $(id) { return document.getElementById(id); }
+  function esc(s) { return String(s == null ? "" : s).replace(/[&<>]/g, function (c) { return c === "&" ? "&amp;" : c === "<" ? "&lt;" : "&gt;"; }); }
   function shorten(h) { return h.length > 20 ? h.slice(0, 10) + "\\u2026" + h.slice(-6) : h; }
   function fmtTime(t) { try { return new Date(t).toLocaleTimeString(); } catch (e) { return ""; } }
+  function fmtCkb(s) {
+    if (s == null || s === "") return "";
+    var p = String(s).split(".");
+    var i = p[0].replace(/\\B(?=(\\d{3})+(?!\\d))/g, ",");
+    return p.length > 1 ? i + '<span class="muted">.' + p[1] + "</span>" : i;
+  }
   function typeClass(t) {
     if (!t) return "t-dim";
     if (t.indexOf("token") >= 0) return "t-token";
@@ -460,60 +520,64 @@ const DASHBOARD_HTML = `<!doctype html>
   function cell(html, cls) { var td = document.createElement("td"); if (cls) td.className = cls; td.innerHTML = html; return td; }
   function hashLink(h) {
     if (!h) return "";
-    return '<a href="' + explorer + h + '" target="_blank" rel="noopener">' + shorten(h) + '</a>';
+    return '<a href="' + explorer + esc(h) + '" target="_blank" rel="noopener" title="' + esc(h) + '">' + shorten(h) + "</a>";
   }
+  function typeCell(o) { return '<span class="' + typeClass(o.type) + '">' + esc(o.type || "") + "</span>"; }
   function addRow(o) {
     if (paused) return;
+    if (!started) { started = true; if (empty) empty.style.display = "none"; }
     var tr = document.createElement("tr");
     tr.setAttribute("data-k", o.kind);
     tr.className = o.kind;
     var type = "", hash = "", ckb = "", detail = "", badge = o.kind;
     if (o.kind === "block") {
       type = '<span class="t-dim">block ' + o.number + "</span>";
-      hash = ""; ckb = ""; detail = o.txCount + " tx";
+      detail = '<span class="muted">' + o.txCount + " tx</span>";
     } else if (o.kind === "alert") {
       badge = "alert " + (o.event || "");
-      type = '<span class="' + typeClass(o.type) + '">' + (o.type || "") + "</span>";
-      hash = hashLink(o.hash); ckb = o.ckb || "";
-      detail = (o.matched || []).join(", ");
+      type = typeCell(o); hash = hashLink(o.hash); ckb = fmtCkb(o.ckb);
+      detail = '<span class="t-token">' + esc((o.matched || []).join(", ")) + "</span>";
     } else if (o.kind === "pool") {
-      type = '<span class="' + typeClass(o.type) + '">' + (o.type || "") + "</span>";
-      hash = hashLink(o.hash); ckb = o.ckb || "";
-      detail = '<span class="muted">' + o.ins + " \\u2192 " + o.outs + "</span>";
+      type = typeCell(o); hash = hashLink(o.hash); ckb = fmtCkb(o.ckb);
+      detail = '<span class="muted">' + o.ins + " \\u2192 " + o.outs + " cells</span>";
     } else if (o.kind === "commit") {
-      type = '<span class="' + typeClass(o.type) + '">' + (o.type || "") + "</span>";
-      hash = hashLink(o.hash); ckb = o.ckb || "";
+      type = typeCell(o); hash = hashLink(o.hash); ckb = fmtCkb(o.ckb);
       var d = [];
-      if (o.latencyMs != null) d.push('<span class="muted">\\u23f1 ' + o.latencyMs + "ms in pool</span>");
-      if (o.matched) d.push('<span class="t-token">matched: ' + o.matched.join(", ") + "</span>");
+      if (o.latencyMs != null) d.push('<span class="muted">\\u23f1 ' + o.latencyMs + "ms</span>");
+      if (o.matched) d.push('<span class="t-token">matched: ' + esc(o.matched.join(", ")) + "</span>");
       detail = d.join(" \\u00b7 ");
     } else { return; }
-    tr.appendChild(cell(fmtTime(o.t), "muted"));
-    tr.appendChild(cell('<span class="badge ' + o.kind + '">' + badge + "</span>"));
-    tr.appendChild(cell(type));
-    tr.appendChild(cell(hash));
-    tr.appendChild(cell(ckb));
-    tr.appendChild(cell(detail, "detail"));
+    tr.appendChild(cell(fmtTime(o.t), "c-time"));
+    tr.appendChild(cell('<span class="badge ' + o.kind + '">' + badge + "</span>", "c-badge"));
+    tr.appendChild(cell(type, "c-type"));
+    tr.appendChild(cell(hash, "c-hash"));
+    tr.appendChild(cell(ckb, "c-ckb"));
+    tr.appendChild(cell(detail, "c-detail"));
     rows.insertBefore(tr, rows.firstChild);
     while (rows.childElementCount > MAXROWS) rows.removeChild(rows.lastChild);
   }
-  function applyStats(o) {
-    $("s-blocks").textContent = o.blocks;
-    $("s-committed").textContent = o.committed;
-    $("s-alerts").textContent = o.alerts;
-    $("s-pool").textContent = o.inPool;
+  function setNum(id, val) {
+    var el = $(id);
+    var s = (typeof val === "number") ? val.toLocaleString() : String(val);
+    if (el.textContent === s) return;
+    el.textContent = s;
+    if (prev[id] !== undefined) { el.classList.remove("bump"); void el.offsetWidth; el.classList.add("bump"); }
+    prev[id] = s;
   }
+  function applyStats(o) { setNum("s-blocks", o.blocks); setNum("s-committed", o.committed); setNum("s-alerts", o.alerts); setNum("s-pool", o.inPool); }
   function applyMeta(o) {
     explorer = o.explorer || "";
     $("net").textContent = o.network;
+    $("ws").textContent = o.ws || "";
     document.title = "CKB monitor \\u00b7 " + o.network;
-    $("hint").textContent = o.hasRules ? ("watching: " + o.rules.join("  \\u00b7  ")) : "no rules set \\u2014 streaming all activity";
+    $("hint").textContent = o.hasRules ? ("watching: " + o.rules.join("  \\u00b7  ")) : "no rules \\u2014 streaming all activity";
   }
-  // filter checkboxes -> toggle a class on #wrap
-  var boxes = document.querySelectorAll("#controls input[data-f]");
-  for (var i = 0; i < boxes.length; i++) {
-    boxes[i].addEventListener("change", function (e) {
-      wrap.classList.toggle("hide-" + e.target.getAttribute("data-f"), !e.target.checked);
+  var chips = document.querySelectorAll(".chip[data-f]");
+  for (var i = 0; i < chips.length; i++) {
+    chips[i].addEventListener("click", function () {
+      var k = this.getAttribute("data-f");
+      var off = this.classList.toggle("off");
+      wrap.classList.toggle("hide-" + k, off);
     });
   }
   $("pause").addEventListener("click", function () {
