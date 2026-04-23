@@ -466,6 +466,12 @@ const DASHBOARD_HTML = `<!doctype html>
   .mixbar { flex: 1; height: 7px; background: #0c121c; border-radius: 4px; overflow: hidden; }
   .mixbar i { display: block; height: 100%; background: currentColor; opacity: .85; border-radius: 4px; }
   .mixn { width: 32px; text-align: right; color: var(--muted); font-family: ui-monospace, monospace; }
+  #pulsewrap { position: relative; flex: none; height: 100px; margin: 14px 14px 0; overflow: hidden;
+               border: 1px solid var(--border); border-radius: 12px;
+               background: radial-gradient(120% 150% at 50% 130%, #0f1826, #0a0e14); }
+  #pulse { width: 100%; height: 100%; display: block; }
+  .plabel { position: absolute; top: 8px; left: 12px; z-index: 1; font-size: 10px; letter-spacing: .7px;
+            text-transform: uppercase; color: var(--muted); pointer-events: none; }
 </style>
 </head>
 <body>
@@ -480,6 +486,7 @@ const DASHBOARD_HTML = `<!doctype html>
   <div class="spacer"></div>
   <div class="status"><span class="dot" id="dot"></span><span id="conn">connecting…</span></div>
 </header>
+<div id="pulsewrap"><span class="plabel">live network pulse</span><canvas id="pulse"></canvas></div>
 <div class="cards">
   <div class="card blocks"><div class="num" id="s-blocks">0</div><div class="lbl">blocks</div></div>
   <div class="card committed"><div class="num" id="s-committed">0</div><div class="lbl">committed</div></div>
@@ -620,6 +627,7 @@ const DASHBOARD_HTML = `<!doctype html>
   var typeCounts = {};
   function track(o) {
     tp[tp.length - 1]++;
+    emit(o);
     if (o.kind === "block") { blocks.push({ n: o.txCount || 0 }); if (blocks.length > 48) blocks.shift(); drawBlocks(); }
     if (o.kind === "pool" || o.kind === "commit" || o.kind === "alert") {
       var t = o.type || "other"; typeCounts[t] = (typeCounts[t] || 0) + 1;
@@ -683,6 +691,63 @@ const DASHBOARD_HTML = `<!doctype html>
   }, 1000);
   window.addEventListener("resize", function () { drawTp(); drawBlocks(); });
   drawTp(); drawBlocks(); drawMix();
+
+  // ---- ambient node-pulse (decorative, driven by the live event stream) ----
+  var pulseCv = $("pulse"), ripples = [], parts = [], pt = 0;
+  var PCOL = { token: "#f5b342", transfer: "#3fd07f", block: "#4aa3ff", nft: "#45d6e0", dao: "#c08bff", dim: "#6b7785" };
+  function hexA(hex, a) {
+    var n = parseInt(hex.slice(1), 16);
+    return "rgba(" + ((n >> 16) & 255) + "," + ((n >> 8) & 255) + "," + (n & 255) + "," + (a < 0 ? 0 : a).toFixed(3) + ")";
+  }
+  function colorFor(o) {
+    if (o.kind === "block") return PCOL.block;
+    var tc = typeClass(o.type);
+    if (tc === "t-token") return PCOL.token;
+    if (tc === "t-transfer") return PCOL.transfer;
+    if (tc === "t-nft") return PCOL.nft;
+    if (tc === "t-dao") return PCOL.dao;
+    return o.kind === "alert" ? PCOL.token : PCOL.dim;
+  }
+  function emit(o) {
+    var col = colorFor(o), big = (o.kind === "block" || o.kind === "alert");
+    ripples.push({ r: 7, max: big ? 175 : 120, col: col, a: big ? 0.85 : 0.55, w: big ? 2.4 : 1.4 });
+    for (var i = 0; i < (big ? 7 : 2); i++) {
+      var ang = Math.random() * Math.PI * 2, sp = 0.6 + Math.random() * 1.7;
+      parts.push({ x: 0, y: 0, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp, life: 1, col: col, sz: big ? 2.6 : 1.7 });
+    }
+    if (ripples.length > 44) ripples.splice(0, ripples.length - 44);
+    if (parts.length > 280) parts.splice(0, parts.length - 280);
+  }
+  function pulseFrame() {
+    if (!pulseCv) return;
+    var dpr = window.devicePixelRatio || 1;
+    var w = pulseCv.clientWidth || 600, h = pulseCv.clientHeight || 100;
+    if (pulseCv.width !== Math.floor(w * dpr) || pulseCv.height !== Math.floor(h * dpr)) { pulseCv.width = Math.floor(w * dpr); pulseCv.height = Math.floor(h * dpr); }
+    var c = pulseCv.getContext("2d"); c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    c.clearRect(0, 0, w, h);
+    var cx = w / 2, cy = h / 2, i;
+    c.strokeStyle = "rgba(255,255,255,.035)"; c.lineWidth = 1;
+    for (var gr = 28; gr < w; gr += 36) { c.beginPath(); c.arc(cx, cy, gr, 0, Math.PI * 2); c.stroke(); }
+    for (i = ripples.length - 1; i >= 0; i--) {
+      var rp = ripples[i]; rp.r += 1.7; var prog = rp.r / rp.max;
+      if (prog >= 1) { ripples.splice(i, 1); continue; }
+      c.beginPath(); c.arc(cx, cy, rp.r, 0, Math.PI * 2);
+      c.strokeStyle = hexA(rp.col, rp.a * (1 - prog)); c.lineWidth = rp.w; c.stroke();
+    }
+    for (i = parts.length - 1; i >= 0; i--) {
+      var p = parts[i]; p.x += p.vx; p.y += p.vy; p.life -= 0.012;
+      if (p.life <= 0) { parts.splice(i, 1); continue; }
+      c.beginPath(); c.arc(cx + p.x, cy + p.y, p.sz, 0, Math.PI * 2);
+      c.fillStyle = hexA(p.col, p.life * 0.9); c.fill();
+    }
+    pt += 0.05; var br = 6.5 + Math.sin(pt) * 1.3;
+    var grd = c.createRadialGradient(cx, cy, 0, cx, cy, 28);
+    grd.addColorStop(0, "rgba(47,230,197,.5)"); grd.addColorStop(1, "rgba(47,230,197,0)");
+    c.fillStyle = grd; c.beginPath(); c.arc(cx, cy, 28, 0, Math.PI * 2); c.fill();
+    c.fillStyle = "#2fe6c5"; c.beginPath(); c.arc(cx, cy, br, 0, Math.PI * 2); c.fill();
+    requestAnimationFrame(pulseFrame);
+  }
+  if (pulseCv) requestAnimationFrame(pulseFrame);
 
   function connect() {
     var es = new EventSource("/events");
