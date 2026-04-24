@@ -125,13 +125,13 @@ sees the last ~250 events.
 
 It also includes:
 
-- **Network switch** — toggle testnet / mainnet from the header; the server reconnects
+- **Network switch**: toggle testnet / mainnet from the header; the server reconnects
   its upstream and resets the view, no restart needed.
 - **Live charts** (pure canvas): throughput (events/sec), tx per block, and type mix.
-- **Node pulse** — an ambient visualization that emits a colored ripple per transaction.
-- **Chain bar** — epoch progress, block interval, mempool depth (pending + proposed),
+- **Node pulse**: an ambient visualization that emits a colored ripple per transaction.
+- **Chain bar**: epoch progress, block interval, mempool depth (pending + proposed),
   and the median fee rate, plus a banner if the node reports network alerts.
-- **Richer rows** — per-transaction **fee** and **cycles** (read for free from the
+- **Richer rows**: per-transaction **fee** and **cycles** (read for free from the
   mempool entry) and decoded **xUDT / sUDT token amounts** (raw, no decimals applied).
 
 The list is paged (default 50 rows; selectable 25 / 50 / 100 / 200) with newer / older /

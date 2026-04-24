@@ -1,30 +1,30 @@
 #!/usr/bin/env node
-// ckb-monitor.mjs — a live CKB on-chain monitor.
+// ckb-monitor.mjs: a live CKB on-chain monitor.
 //
 // It subscribes to the PUBLIC WebSocket (no node, no polling), classifies every
-// transaction by type, tracks the pending->committed lifecycle, and — the point of
-// the tool — fires ACTIONS when a transaction matches rules you care about.
+// transaction by type, tracks the pending->committed lifecycle, and (the point of
+// the tool) fires ACTIONS when a transaction matches rules you care about.
 //
 // Zero dependencies on Node 22+ (built-in WebSocket). On older Node: `npm i ws`.
 //
-// ── Watch rules (combine freely; a tx must satisfy ALL given rules; commas = OR within one) ──
+// === Watch rules (combine freely; a tx must satisfy ALL given rules; commas = OR within one) ===
 //   --address <ckb1…|ckt1…>[,…]   match outputs paying to these address(es)   (incoming funds)
 //   --min-ckb <N>                 match txs whose total output capacity ≥ N CKB (whale watch)
 //   --type <alias|0xhash>[,…]     match an asset type: dao,sudt,xudt,cota,unique,typeid, or a raw code hash
 //   --type-args <0x…>[,…]         match a specific token (xUDT/sUDT args = token id)
 //   --lock-args <0x…>[,…]         match outputs by raw lock args (alternative to --address)
 //
-// ── Actions on a match ──
+// === Actions on a match ===
 //   (always) prints a highlighted 🔔 ALERT line
 //   --webhook <url>               HTTP POST a JSON payload (Slack/Discord/your backend)
 //   --exec "<cmd>"                run a shell command; env: CKB_TX_HASH, CKB_TX_TYPE, CKB_TX_CKB, CKB_TX_EVENT, CKB_MATCHED, CKB_EXPLORER
 //   --quiet                       show only alerts + the periodic summary (good for background monitoring)
 //
-// ── Live dashboard ──
+// === Live dashboard ===
 //   --serve [port]                browser dashboard (live table over SSE); default port 8080
 //   --port <n>                    dashboard port (alt to --serve <port>)
 //
-// ── Other ──
+// === Other ===
 //   --net testnet | CKB_NET=testnet      (default mainnet)
 //   --ws <url> | CKB_WS=<url>            custom endpoint
 //   --summary-ms <ms>                    summary cadence (default 30000)
@@ -203,7 +203,7 @@ function decodeAddress(addr) {
   const bytes = convertBits(data.slice(0, -6), 5, 8, false);
   const hex = (b) => "0x" + b.map((x) => x.toString(16).padStart(2, "0")).join("");
   if (bytes[0] !== 0x00) {
-    throw new Error("only full (CKB2021) addresses are supported here — use --lock-args instead");
+    throw new Error("only full (CKB2021) addresses are supported here; use --lock-args instead");
   }
   return {
     name: addr,
@@ -574,10 +574,10 @@ const DASHBOARD_HTML = `<!doctype html>
 </header>
 <div id="pulsewrap"><span class="plabel">live network pulse</span><canvas id="pulse"></canvas></div>
 <div id="chainbar">
-  <span class="cstat">epoch <b id="ch-epoch">–</b> <span class="ebar"><i id="ch-ebar"></i></span> <span class="muted" id="ch-eidx"></span></span>
-  <span class="cstat">block <b id="ch-int">–</b></span>
-  <span class="cstat">mempool <b id="ch-pool">–</b></span>
-  <span class="cstat">fee <b id="ch-fee">–</b> <span class="muted">sh/kB</span></span>
+  <span class="cstat">epoch <b id="ch-epoch">-</b> <span class="ebar"><i id="ch-ebar"></i></span> <span class="muted" id="ch-eidx"></span></span>
+  <span class="cstat">block <b id="ch-int">-</b></span>
+  <span class="cstat">mempool <b id="ch-pool">-</b></span>
+  <span class="cstat">fee <b id="ch-fee">-</b> <span class="muted">sh/kB</span></span>
   <span class="cstat alertbanner" id="ch-alert" style="display:none"></span>
 </div>
 <div id="watchtower"></div>
