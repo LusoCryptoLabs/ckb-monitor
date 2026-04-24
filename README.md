@@ -65,6 +65,42 @@ within one rule.
   `CKB_TX_HASH`, `CKB_TX_TYPE`, `CKB_TX_CKB`, `CKB_TX_EVENT`, `CKB_MATCHED`, `CKB_EXPLORER`
 - `--quiet` show only alerts plus the periodic summary (good for background monitoring)
 
+## Watchtower (watch your own contracts)
+
+A generic firehose of other people's transactions isn't useful. The watchtower
+turns this into an **ops monitor for your own deployments**: a list of named
+watches, each matching the txs you care about, and each able to **alarm when it
+goes silent** (the one thing an explorer can't do).
+
+```bash
+node ckb-monitor.mjs --net testnet --watch watchlist.testnet.json --serve
+# headless, ping Slack/Discord on every hit and every stall:
+node ckb-monitor.mjs --net testnet --watch watchlist.testnet.json --webhook https://hooks...
+```
+
+Each entry in the JSON file is a watch:
+
+```json
+{
+  "watches": [
+    { "name": "cells-names",  "desc": ".cell registrations", "type": "0x9352...2cd" },
+    { "name": "sequencer",    "desc": "checkpoint advances", "type": "0x...anchor", "idleMin": 30 },
+    { "name": "my-token",     "desc": "xUDT mints",          "typeArgs": "0x...owner" },
+    { "name": "deployer",     "desc": "funding cell",        "address": "ckt1..." }
+  ]
+}
+```
+
+A watch matches a tx by any of `type` (code hash or alias), `typeArgs` (token id),
+`lockArgs`, `address`, or `minCkb` (all given dimensions must hold). On a match it
+fires a **hit** (logged, plus webhook/exec); if `idleMin` is set and no match has
+been seen for that many minutes, it fires a **SILENT** alarm, and a later match
+fires **BACK**. The dashboard shows a watchtower panel with each watch's health
+(healthy / stale / alarm), hit count, and time since last seen.
+
+`watchlist.testnet.json` ships with a live `cells-names` watch (the `account-cell-type`
+type hash) plus disabled template entries to fill in from your own deploy docs.
+
 ## Live dashboard
 
 Add `--serve` to also run a tiny local web dashboard. It serves a single embedded

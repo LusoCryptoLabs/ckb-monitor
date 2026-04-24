@@ -1,0 +1,32 @@
+{
+  "_README": "Watchtower config for your own Pudge deployments. Run: node ckb-monitor.mjs --net testnet --watch watchlist.testnet.json --serve [--webhook https://hooks.slack...]. Each watch alerts when a matching tx appears, and (if idleMin is set) fires a SILENT alarm when none has appeared for that many minutes. Fill the 0x... placeholders from each project's DEPLOY/TESTNET doc, then remove \"disabled\": true.",
+  "watches": [
+    {
+      "name": "cells-names",
+      "desc": ".cell registrations / edits / transfers (account-cell-type)",
+      "type": "0x93522290275cfd1e800fc837e8880a664ea54de9aa69aba11852696c9139a2cd"
+    },
+    {
+      "name": "liquid-cells-sequencer",
+      "desc": "checkpoint advances; a stall is an incident",
+      "idleMin": 30,
+      "disabled": true,
+      "_paste": "type = the Liquid Cells anchor type-id code hash (codeHash) from Liquid-Cells/DEPLOY.md (memory prefix 0x83158549...). Set, then drop disabled.",
+      "type": ""
+    },
+    {
+      "name": "xada-token",
+      "desc": "χADA xUDT mints / transfers",
+      "disabled": true,
+      "_paste": "typeArgs = the χADA xUDT owner-lock hash (the xUDT type script args) from BRIDGE_STATUS.md. Or set type to the χADA mint code hash to catch mints only.",
+      "typeArgs": ""
+    },
+    {
+      "name": "deployer-funds",
+      "desc": "alert when the deployer lock spends/receives (watch your funding cell)",
+      "disabled": true,
+      "_paste": "address = your deployer ckt1... address, or lockArgs = its lock args.",
+      "address": ""
+    }
+  ]
+}

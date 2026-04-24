@@ -37,6 +37,7 @@
 
 import { spawn } from "node:child_process";
 import http from "node:http";
+import fs from "node:fs";
 
 // ---------------- args ----------------
 const argv = process.argv.slice(2);
@@ -73,6 +74,11 @@ ACTIONS ON A MATCH
   --exec "<cmd>"                      run a shell command; env: CKB_TX_HASH, CKB_TX_TYPE,
                                       CKB_TX_CKB, CKB_TX_EVENT, CKB_MATCHED, CKB_EXPLORER
   --quiet                             only alerts + the periodic summary
+
+WATCHTOWER
+  --watch <file.json>                 watch your own contracts; alarm when one goes silent
+                                      (each entry: name/desc + type/typeArgs/lockArgs/address
+                                      /minCkb rules + optional idleMin liveness threshold)
 
 DASHBOARD
   --serve [port]                      live browser dashboard over SSE (default port 8080)
@@ -232,6 +238,9 @@ const QUIET = flag("--quiet");
 const WEBHOOK = opt("--webhook");
 const EXEC = opt("--exec");
 
+// watchtower: --watch <file.json>  (named watches over your own contracts, with liveness alarms)
+const WATCH_FILE = opt("--watch");
+
 // dashboard: --serve [port]  (or --port <n>, or PORT env)
 const SERVE = flag("--serve");
 const serveIdx = argv.indexOf("--serve");
@@ -288,34 +297,33 @@ function decodeEpoch(hex) {
   return { number: Number(e & 0xffffffn), index: Number((e >> 24n) & 0xffffn), length: Number((e >> 40n) & 0xffffn) };
 }
 
-// returns matched-reason strings if the tx satisfies every given rule, else null
-function matchRules(tx) {
-  if (!HAS_RULES) return null;
+// returns matched-reason strings if the tx satisfies every dimension of `r`, else null
+function matchAgainst(tx, r) {
   const outs = tx.outputs || [];
   const reasons = [];
-  if (rules.minShannons !== null) {
+  if (r.minShannons != null) {
     const cap = capOf(tx);
-    if (cap < rules.minShannons) return null;
-    reasons.push(`\u2265${ckb(rules.minShannons)} CKB (=${ckb(cap)})`);
+    if (cap < r.minShannons) return null;
+    reasons.push(`\u2265${ckb(r.minShannons)} CKB (=${ckb(cap)})`);
   }
-  if (rules.types.length) {
-    const hit = outs.find((o) => o.type && rules.types.includes(o.type.code_hash.toLowerCase()));
+  if (r.types && r.types.length) {
+    const hit = outs.find((o) => o.type && r.types.includes(o.type.code_hash.toLowerCase()));
     if (!hit) return null;
     reasons.push(`type=${LABEL_OF[hit.type.code_hash.toLowerCase()] || short(hit.type.code_hash)}`);
   }
-  if (rules.typeArgs.length) {
-    const hit = outs.find((o) => o.type && rules.typeArgs.includes((o.type.args || "").toLowerCase()));
+  if (r.typeArgs && r.typeArgs.length) {
+    const hit = outs.find((o) => o.type && r.typeArgs.includes((o.type.args || "").toLowerCase()));
     if (!hit) return null;
     reasons.push(`token=${short(hit.type.args)}`);
   }
-  if (rules.lockArgs.length) {
-    const hit = outs.find((o) => rules.lockArgs.includes((o.lock.args || "").toLowerCase()));
+  if (r.lockArgs && r.lockArgs.length) {
+    const hit = outs.find((o) => r.lockArgs.includes((o.lock.args || "").toLowerCase()));
     if (!hit) return null;
     reasons.push(`lock-args=${short(hit.lock.args)}`);
   }
-  if (rules.locks.length) {
+  if (r.locks && r.locks.length) {
     const hit = outs.find((o) =>
-      rules.locks.some(
+      r.locks.some(
         (L) =>
           o.lock.code_hash.toLowerCase() === L.code_hash &&
           o.lock.hash_type === L.hash_type &&
@@ -325,7 +333,11 @@ function matchRules(tx) {
     if (!hit) return null;
     reasons.push(`address`);
   }
-  return reasons;
+  return reasons.length ? reasons : null;
+}
+function matchRules(tx) {
+  if (!HAS_RULES) return null;
+  return matchAgainst(tx, rules);
 }
 
 // ---------------- actions ----------------
@@ -525,6 +537,22 @@ const DASHBOARD_HTML = `<!doctype html>
   .pgl.on { background: var(--green); border-color: var(--green); color: #04140a; font-weight: 700; }
   .pginfo b { color: var(--text); font-family: ui-monospace, monospace; }
   #pg-size { font: inherit; font-size: 12px; background: #0c121c; color: var(--text); border: 1px solid var(--border); border-radius: 7px; padding: 4px 6px; }
+  #watchtower { display: none; flex-direction: column; gap: 6px; margin: 12px 14px 0; padding: 11px 14px; flex: none;
+                border: 1px solid var(--border); border-radius: 12px; background: linear-gradient(180deg, #11182a, #0b1019); }
+  .wt-title { font-size: 10px; text-transform: uppercase; letter-spacing: .7px; color: var(--muted); margin-bottom: 2px; }
+  .wt-row { display: flex; align-items: center; gap: 10px; font-size: 12px; }
+  .wt-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; }
+  .wt-dot.healthy { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .wt-dot.stale { background: var(--amber); }
+  .wt-dot.alarm { background: #ff5147; box-shadow: 0 0 8px #ff5147; animation: pulse 1.2s infinite; }
+  .wt-dot.idle { background: var(--blue); }
+  .wt-name { font-weight: 700; color: var(--text); min-width: 160px; }
+  .wt-desc { color: var(--muted); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .wt-meta { color: var(--muted); font-family: ui-monospace, monospace; white-space: nowrap; }
+  .wt-meta b { color: var(--text); }
+  tr.watch td { background: rgba(47,230,197,.07); }
+  tr.watch td:first-child { border-left-color: var(--teal); }
+  .badge.watch { background: #0c2a26; color: var(--teal); }
 </style>
 </head>
 <body>
@@ -551,6 +579,7 @@ const DASHBOARD_HTML = `<!doctype html>
   <span class="cstat">fee <b id="ch-fee">–</b> <span class="muted">sh/kB</span></span>
   <span class="cstat alertbanner" id="ch-alert" style="display:none"></span>
 </div>
+<div id="watchtower"></div>
 <div class="cards">
   <div class="card blocks"><div class="num" id="s-blocks">0</div><div class="lbl">blocks</div></div>
   <div class="card committed"><div class="num" id="s-committed">0</div><div class="lbl">committed</div></div>
@@ -602,7 +631,7 @@ const DASHBOARD_HTML = `<!doctype html>
   var BUFMAX = 2000;
   var buf = [];                 // newest-first event objects backing the paged table
   var page = 0, pageSize = 50, pendingNew = 0, paused = false, prev = {};
-  var filters = { pool: true, commit: true, block: true, alert: true };
+  var filters = { pool: true, commit: true, block: true, alert: true, watch: true };
   var explorer = "";
   var rows = document.getElementById("rows");
   var wrap = document.getElementById("wrap");
@@ -635,6 +664,21 @@ const DASHBOARD_HTML = `<!doctype html>
   function tokenName(t) { return (t.label || "token") + (t.id ? " " + t.id.slice(0, 8) : ""); }
   function rowHtml(o) {
     var badge = o.kind, type = "", hash = "", ckb = "", detail = "";
+    if (o.kind === "watch") {
+      badge = o.status === "idle" ? "silent" : o.status === "recovered" ? "back" : "watch";
+      type = '<span class="t-token">\\u25c9 ' + esc(o.watch) + "</span>";
+      hash = o.hash ? hashLink(o.hash) : "";
+      detail = o.status === "idle"
+        ? '<span class="alertbanner">no activity in ' + o.idleMin + "m</span>"
+        : '<span class="t-token">' + esc((o.matched || []).join(", ")) + "</span>";
+      return '<tr data-k="watch" class="watch">'
+        + '<td class="c-time">' + fmtTime(o.t) + "</td>"
+        + '<td class="c-badge"><span class="badge watch">' + badge + "</span></td>"
+        + '<td class="c-type">' + type + "</td>"
+        + '<td class="c-hash">' + hash + "</td>"
+        + '<td class="c-ckb"></td>'
+        + '<td class="c-detail">' + detail + "</td></tr>";
+    }
     if (o.kind === "block") {
       type = '<span class="t-dim">block ' + o.number + "</span>";
       var bp = ['<span class="muted">' + o.txCount + " tx</span>"];
@@ -716,6 +760,30 @@ const DASHBOARD_HTML = `<!doctype html>
     var ab = $("ch-alert");
     if (o.alerts && o.alerts.length) { ab.style.display = ""; ab.textContent = "\\u26a0 " + o.alerts.join(" \\u00b7 "); }
     else { ab.style.display = "none"; ab.textContent = ""; }
+  }
+  function relAge(ms) {
+    var s = Math.floor(ms / 1000);
+    if (s < 60) return s + "s";
+    var m = Math.floor(s / 60);
+    if (m < 60) return m + "m";
+    return Math.floor(m / 60) + "h";
+  }
+  function applyWatchStatus(o) {
+    var wt = $("watchtower"); if (!wt) return;
+    if (!o.watches || !o.watches.length) { wt.style.display = "none"; return; }
+    wt.style.display = "flex";
+    var html = '<div class="wt-title">watchtower \\u2014 your contracts</div>';
+    for (var i = 0; i < o.watches.length; i++) {
+      var w = o.watches[i];
+      var tail = w.idleMin
+        ? (w.health === "alarm" ? ' \\u00b7 <span class="alertbanner">SILENT &gt;' + w.idleMin + "m</span>" : ' \\u00b7 alarm @ ' + w.idleMin + "m")
+        : "";
+      html += '<div class="wt-row"><span class="wt-dot ' + w.health + '"></span>'
+        + '<span class="wt-name">' + esc(w.name) + "</span>"
+        + '<span class="wt-desc">' + esc(w.desc || "") + "</span>"
+        + '<span class="wt-meta"><b>' + w.matchCount + "</b> hits \\u00b7 last " + relAge(w.ageMs) + " ago" + tail + "</span></div>";
+    }
+    wt.innerHTML = html;
   }
   function applyBlockMeta(o) {
     if (o.epoch) {
@@ -894,7 +962,9 @@ const DASHBOARD_HTML = `<!doctype html>
       if (o.kind === "stats") { applyStats(o); return; }
       if (o.kind === "meta") { applyMeta(o); return; }
       if (o.kind === "chain") { applyChain(o); return; }
+      if (o.kind === "watchstatus") { applyWatchStatus(o); return; }
       if (o.kind === "reset") { resetAll(); return; }
+      if (o.kind === "watch") { addEvent(o); return; }
       if (o.kind === "block") applyBlockMeta(o);
       track(o); addEvent(o);
     };
@@ -954,6 +1024,7 @@ function startServer() {
       res.write("data: " + JSON.stringify(metaPayload()) + "\n\n");
       for (const obj of recent) res.write("data: " + JSON.stringify(obj) + "\n\n");
       res.write("data: " + JSON.stringify(statsPayload()) + "\n\n");
+      if (watches.length) res.write("data: " + JSON.stringify(watchStatusPayload()) + "\n\n");
       sseClients.add(res);
       req.on("close", () => sseClients.delete(res));
       return;
@@ -989,6 +1060,90 @@ function call(method, params) {
   });
 }
 
+// ---------------- watchtower: watch your own contracts, alarm on silence ----------------
+let watches = [];
+function loadWatches() {
+  if (!WATCH_FILE) return;
+  let cfg;
+  try { cfg = JSON.parse(fs.readFileSync(WATCH_FILE, "utf8")); }
+  catch (e) { console.error(red(`--watch: cannot read ${WATCH_FILE}: ${e.message}`)); process.exit(1); }
+  const list = Array.isArray(cfg) ? cfg : (cfg.watches || []);
+  const arr = (v) => (v == null ? [] : [].concat(v));
+  watches = list.filter((w) => w && !w.disabled).map((w) => ({
+    name: w.name || "watch",
+    desc: w.desc || "",
+    idleMin: Number(w.idleMin || 0),
+    webhook: w.webhook || null,
+    exec: w.exec || null,
+    rules: {
+      minShannons: w.minCkb != null ? ckbToShannons(w.minCkb) : null,
+      types: arr(w.type).flatMap((t) => (String(t).startsWith("0x") ? [String(t).toLowerCase()] : (ALIAS_OF[String(t).toLowerCase()] || []))),
+      typeArgs: arr(w.typeArgs).map((s) => String(s).toLowerCase()),
+      lockArgs: arr(w.lockArgs).map((s) => String(s).toLowerCase()),
+      locks: arr(w.address).map(decodeAddress),
+    },
+    lastSeen: Date.now(), matchCount: 0, alarmed: false,
+  }));
+  if (watches.length) console.log(green(`watchtower: ${watches.length} watch(es) from ${WATCH_FILE}`));
+}
+loadWatches();
+
+function watchFire(w, status, info = {}) {
+  const tx = info.tx || null, reasons = info.reasons || [];
+  const explorer = tx ? EXPLORER + tx.hash : null;
+  const payload = {
+    watch: w.name, status, network: NET,
+    txHash: tx ? tx.hash : null, explorer, matched: reasons,
+    token: info.token || null, idleMin: w.idleMin || null, lastSeen: w.lastSeen,
+    time: new Date().toISOString(),
+  };
+  const tag = status === "idle" ? bgAlert(" ⏰ SILENT ") : status === "recovered" ? green(" ✓ BACK ") : bgAlert(" 🔔 WATCH ");
+  if (status === "idle")
+    console.log(`${dim(ts())} ${tag} ${bold(w.name)} ${red(`no activity in ${w.idleMin}m`)} ${dim(w.desc)}`);
+  else
+    console.log(`${dim(ts())} ${tag} ${bold(w.name)} ${dim(reasons.join(", "))} ${tx ? short(tx.hash) : ""}`);
+  if (explorer) console.log(dim(`            ${explorer}`));
+  const hook = w.webhook || WEBHOOK;
+  if (hook) fetch(hook, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) }).catch((e) => console.error(red(`watch webhook error: ${e.message}`)));
+  const ex = w.exec || EXEC;
+  if (ex) {
+    const child = spawn(ex, { shell: true, env: { ...process.env, CKB_WATCH: w.name, CKB_WATCH_STATUS: status, CKB_TX_HASH: tx ? tx.hash : "", CKB_EXPLORER: explorer || "", CKB_MATCHED: reasons.join("; ") }, stdio: "ignore" });
+    child.on("error", (e) => console.error(red(`watch exec error: ${e.message}`)));
+  }
+  pushEvent({ kind: "watch", t: Date.now(), watch: w.name, status, hash: tx ? tx.hash : null, matched: reasons, explorer, idleMin: w.idleMin || null });
+}
+function checkWatches(tx, event) {
+  if (!watches.length) return;
+  let tok;
+  for (const w of watches) {
+    const reasons = matchAgainst(tx, w.rules);
+    if (!reasons) continue;
+    w.lastSeen = Date.now(); w.matchCount++;
+    const recovered = w.alarmed; w.alarmed = false;
+    if (tok === undefined) tok = tokenInfo(tx);
+    watchFire(w, recovered ? "recovered" : "hit", { tx, reasons, event, token: tok });
+  }
+}
+function checkIdle() {
+  const now = Date.now();
+  for (const w of watches) {
+    if (!w.idleMin) continue;
+    if ((now - w.lastSeen) / 60000 >= w.idleMin && !w.alarmed) { w.alarmed = true; watchFire(w, "idle"); }
+  }
+  if (watches.length) pushEvent(watchStatusPayload());
+}
+function watchStatusPayload() {
+  const now = Date.now();
+  return {
+    kind: "watchstatus",
+    watches: watches.map((w) => ({
+      name: w.name, desc: w.desc, idleMin: w.idleMin || null, matchCount: w.matchCount,
+      lastSeen: w.lastSeen, ageMs: now - w.lastSeen, alarmed: w.alarmed,
+      health: w.idleMin ? (w.alarmed ? "alarm" : ((now - w.lastSeen) / 60000 < w.idleMin ? "healthy" : "stale")) : "idle",
+    })),
+  };
+}
+
 function handleNewTx(inner) {
   const tx = inner.transaction;
   if (!tx) return;
@@ -1016,6 +1171,7 @@ function handleNewTx(inner) {
     ins: tx.inputs.length, outs: tx.outputs.length,
     fee: meta.fee != null ? ckb(meta.fee) : null, cycles: meta.cycles, token: tok,
   });
+  checkWatches(tx, "pool");
 }
 
 async function handleNewTip(inner) {
@@ -1049,6 +1205,7 @@ async function handleNewTip(inner) {
       hash: tx.hash, type: cls.label, ckb: ckb(capOf(tx)),
       latencyMs, fee: fee != null ? ckb(fee) : null, token: tok, matched: reasons || null,
     });
+    checkWatches(tx, "commit");
   });
   pushEvent(statsPayload());
   if (poolSeen.size > 5000) {
@@ -1144,6 +1301,10 @@ if (HAS_RULES) {
 } else {
   console.log(dim(`no --rules set, so just streaming. add e.g. --min-ckb 100000  or  --address ckb1…  to get alerts.`));
   console.log(dim(`${yellow("\u27f3")} pool   ${cyan("\u25a3")} block   ${green("\u2713")} committed (\u23f1 = time in pool)\n`));
+}
+if (watches.length) {
+  console.log(dim(`watchtower: ${watches.map((w) => w.name + (w.idleMin ? `(silent>${w.idleMin}m)` : "")).join("  ·  ")}\n`));
+  setInterval(checkIdle, 30000);
 }
 if (SERVE) { startServer(); setInterval(pollChain, 8000); }
 connect();
