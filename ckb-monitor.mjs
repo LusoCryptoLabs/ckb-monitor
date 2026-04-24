@@ -312,7 +312,8 @@ function matchAgainst(tx, r) {
     reasons.push(`type=${LABEL_OF[hit.type.code_hash.toLowerCase()] || short(hit.type.code_hash)}`);
   }
   if (r.typeArgs && r.typeArgs.length) {
-    const hit = outs.find((o) => o.type && r.typeArgs.includes((o.type.args || "").toLowerCase()));
+    // prefix match: an xUDT's args is the 32-byte owner-lock hash (the token id) plus optional extension flags
+    const hit = outs.find((o) => o.type && r.typeArgs.some((a) => (o.type.args || "").toLowerCase().startsWith(a)));
     if (!hit) return null;
     reasons.push(`token=${short(hit.type.args)}`);
   }

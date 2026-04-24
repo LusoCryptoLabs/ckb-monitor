@@ -1,5 +1,5 @@
 {
-  "_README": "Watchtower config for your own Pudge deployments. Run: node ckb-monitor.mjs --net testnet --watch watchlist.testnet.json --serve [--webhook https://hooks.slack...]. Each watch alerts when a matching tx appears, and (if idleMin is set) fires a SILENT alarm when none has appeared for that many minutes. Fill the 0x... placeholders from each project's DEPLOY/TESTNET doc, then remove \"disabled\": true.",
+  "_README": "Watchtower for your own Pudge deployments. Run: node ckb-monitor.mjs --net testnet --watch watchlist.testnet.json --serve [--webhook https://hooks...]. Each watch alerts on a matching tx (hit); with idleMin it also fires a SILENT alarm when nothing has matched for that many minutes, and BACK when it resumes. Identifiers pulled from cells-protocol/docs/TESTNET.md, liquid-cells/DEPLOY.md, and cardano-ckb-bridge.",
   "watches": [
     {
       "name": "cells-names",
@@ -8,25 +8,19 @@
     },
     {
       "name": "liquid-cells-sequencer",
-      "desc": "checkpoint advances; a stall is an incident",
-      "idleMin": 30,
-      "disabled": true,
-      "_paste": "type = the Liquid Cells anchor type-id code hash (codeHash) from Liquid-Cells/DEPLOY.md (memory prefix 0x83158549...). Set, then drop disabled.",
-      "type": ""
+      "desc": "checkpoint advances (anchor type-id); silence past 30m = a stall",
+      "type": "0x83158549bb5b2241997d1e8bb5e24b432a78e74473c8601cea276411bca99f1e",
+      "idleMin": 30
     },
     {
-      "name": "xada-token",
-      "desc": "χADA xUDT mints / transfers",
-      "disabled": true,
-      "_paste": "typeArgs = the χADA xUDT owner-lock hash (the xUDT type script args) from BRIDGE_STATUS.md. Or set type to the χADA mint code hash to catch mints only.",
-      "typeArgs": ""
+      "name": "bridge-token-wADA",
+      "desc": "wrapped-ADA xUDT mints / transfers (owner = bridge_lock)",
+      "typeArgs": "0xbeee97755d219fb9f0818cf91744856ef1d8b336050e1e95bcd2c3532b6991af"
     },
     {
-      "name": "deployer-funds",
-      "desc": "alert when the deployer lock spends/receives (watch your funding cell)",
-      "disabled": true,
-      "_paste": "address = your deployer ckt1... address, or lockArgs = its lock args.",
-      "address": ""
+      "name": "bridge-deployer",
+      "desc": "deployer / governor lock receives funds or change (bridge activity)",
+      "address": "ckt1qzda0cr08m85hc8jlnfp3zer7xulejywt49kt2rr0vthywaa50xwsqtmh7tj849k4yznqen79rus6p2pedjdf9q3guk8m"
     }
   ]
 }

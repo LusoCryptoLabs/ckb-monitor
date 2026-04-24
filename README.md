@@ -98,8 +98,10 @@ been seen for that many minutes, it fires a **SILENT** alarm, and a later match
 fires **BACK**. The dashboard shows a watchtower panel with each watch's health
 (healthy / stale / alarm), hit count, and time since last seen.
 
-`watchlist.testnet.json` ships with a live `cells-names` watch (the `account-cell-type`
-type hash) plus disabled template entries to fill in from your own deploy docs.
+`watchlist.testnet.json` ships wired to live Pudge deployments: `cells-names`
+(the `account-cell-type` type hash), `liquid-cells-sequencer` (the anchor type-id,
+with a 30-minute stall alarm), `bridge-token-wADA` (the wrapped-ADA xUDT by owner),
+and `bridge-deployer` (the deployer/governor address).
 
 ## Live dashboard
 
