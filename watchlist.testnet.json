@@ -1,10 +1,30 @@
 {
-  "_README": "Watchtower for your own Pudge deployments. Run: node ckb-monitor.mjs --net testnet --watch watchlist.testnet.json --serve [--webhook https://hooks...]. Each watch alerts on a matching tx (hit); with idleMin it also fires a SILENT alarm when nothing has matched for that many minutes, and BACK when it resumes. Identifiers pulled from cells-protocol/docs/TESTNET.md, liquid-cells/DEPLOY.md, and cardano-ckb-bridge.",
+  "_README": "Watchtower for your own Pudge deployments. Run: node ckb-monitor.mjs --net testnet --watch watchlist.testnet.json --serve [--webhook https://hooks...]. Each watch alerts on a matching tx (hit); with idleMin it also fires a SILENT alarm when nothing has matched for that many minutes, and BACK when it resumes. Identifiers pulled from LCL.cells/docs/TESTNET.md, liquid-cells/DEPLOY.md, and cardano-ckb-bridge.",
   "watches": [
     {
+      "name": "cells-code-upgrade",
+      "desc": "THE ONE THAT MATTERS. The type-id of the account-cell-type code cell. Any transaction carrying it is replacing the code that decides who owns every .cell name, where payments go, and whether ownership is checked at all. Watched by type-id and NOT by the owner's address on purpose: an upgrade recreates the code cell under whatever lock the spender chooses, so a thief's upgrade pays nothing to the old address and an address watch would miss exactly the case that matters. A hit is either an upgrade Telmo made deliberately, or the key is no longer his. There is no timelock yet (decision 0009), so seeing it IS the defence: move names out, and say so publicly.",
+      "typeArgs": "0x40ba508de5bd63f27f3d97f693036016c9eaa268c7d3e580cd34c9ec816538a5"
+    },
+    {
+      "name": "cells-code-destroyed",
+      "desc": "The same code cell, watched by outpoint so it fires the moment it is SPENT, whatever happens next. Deliberately a separate watch: a watch matches only when every dimension holds, so pairing the type-id with the outpoint would have required both, and missed exactly the case this covers. Destroying the code cell without recreating it freezes every name, since the cell dep would no longer resolve. MAINTENANCE: a legitimate upgrade moves the cell, so this outpoint must be updated to the new one after every upgrade, or the watch silently guards nothing.",
+      "outPoint": "0x3fd7b222f00587d07f5bce2049f0cec46fcd35b9fe8813299afefa959556c0d3:0"
+    },
+    {
+      "name": "cells-lock-upgrade",
+      "desc": "Same, for the account-lock code cell. Less dangerous than the type script (the lock is always-success by design) but still ours to know about.",
+      "typeArgs": "0x75a67ce84f7b448fbf22f7a51d072f30496b1958fe3618733a104206ce9d39a0"
+    },
+    {
+      "name": "cells-upgrade-wallet",
+      "desc": "The wallet that holds the upgrade key, watched for funding and change. Not a substitute for the two watches above: this one only sees money arriving.",
+      "address": "ckt1qzda0cr08m85hc8jlnfp3zer7xulejywt49kt2rr0vthywaa50xwsqdd4mpjvx50zlsvy7zejrqz573hs93429q3pa5x9"
+    },
+    {
       "name": "cells-names",
-      "desc": ".cell registrations / edits / transfers (account-cell-type)",
-      "type": "0x93522290275cfd1e800fc837e8880a664ea54de9aa69aba11852696c9139a2cd"
+      "desc": ".cell registrations / edits / transfers (account-cell-type, redeployed 2026-09-04)",
+      "type": "0x9a92bef5ad1a9a4652b17762237fd817c818fa55e5740b778e40a5edc98653de"
     },
     {
       "name": "liquid-cells-sequencer",

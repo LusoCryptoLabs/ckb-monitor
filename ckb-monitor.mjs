@@ -227,13 +227,15 @@ const rules = {
   typeArgs: csv("--type-args").map((s) => s.toLowerCase()),
   lockArgs: csv("--lock-args").map((s) => s.toLowerCase()),
   locks: csv("--address").map(decodeAddress),
+  outPoints: csv("--out-point").map((s) => s.toLowerCase()),
 };
 const HAS_RULES =
   rules.minShannons !== null ||
   rules.types.length ||
   rules.typeArgs.length ||
   rules.lockArgs.length ||
-  rules.locks.length;
+  rules.locks.length ||
+  rules.outPoints.length;
 const QUIET = flag("--quiet");
 const WEBHOOK = opt("--webhook");
 const EXEC = opt("--exec");
@@ -321,6 +323,19 @@ function matchAgainst(tx, r) {
     const hit = outs.find((o) => r.lockArgs.includes((o.lock.args || "").toLowerCase()));
     if (!hit) return null;
     reasons.push(`lock-args=${short(hit.lock.args)}`);
+  }
+  if (r.outPoints && r.outPoints.length) {
+    // The only rule that reads INPUTS: it fires when the named cell is spent,
+    // whatever the spender does with it afterwards.
+    const hit = (tx.inputs || []).find((i) => {
+      const p = i.previous_output || i.previousOutput;
+      if (!p) return false;
+      const idx = typeof p.index === "string" ? parseInt(p.index, 16) : p.index;
+      return r.outPoints.includes(`${String(p.tx_hash || p.txHash).toLowerCase()}:${idx}`);
+    });
+    if (!hit) return null;
+    const p = hit.previous_output || hit.previousOutput;
+    reasons.push(`spent ${short(p.tx_hash || p.txHash)}:${typeof p.index === "string" ? parseInt(p.index, 16) : p.index}`);
   }
   if (r.locks && r.locks.length) {
     const hit = outs.find((o) =>
@@ -1082,6 +1097,11 @@ function loadWatches() {
       typeArgs: arr(w.typeArgs).map((s) => String(s).toLowerCase()),
       lockArgs: arr(w.lockArgs).map((s) => String(s).toLowerCase()),
       locks: arr(w.address).map(decodeAddress),
+      // "0xhash:index" — matches when that exact cell is SPENT. Every other rule
+      // reads outputs, so a cell that is consumed and never recreated slips past
+      // them; for a contract's own code cell that is the difference between
+      // spotting an upgrade and missing a deliberate destruction.
+      outPoints: arr(w.outPoint).map((s) => String(s).toLowerCase()),
     },
     lastSeen: Date.now(), matchCount: 0, alarmed: false,
   }));
