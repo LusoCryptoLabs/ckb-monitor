@@ -1,0 +1,9 @@
+version: 2
+updates:
+  # Only security updates for packages: open-pull-requests-limit 0 turns off version updates.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: ci
